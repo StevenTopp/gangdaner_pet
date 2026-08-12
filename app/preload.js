@@ -1,12 +1,8 @@
 const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("gangdanerPet", {
-  getManifest: () => ipcRenderer.invoke("gangdaner-pet:get-manifest"),
-  getSettings: () => ipcRenderer.invoke("gangdaner-pet:get-settings"),
-  updateSettings: patch => ipcRenderer.invoke("gangdaner-pet:update-settings", patch),
-  sendEvent: key => ipcRenderer.invoke("gangdaner-pet:send-event", key),
-  replaceAsset: key => ipcRenderer.invoke("gangdaner-pet:replace-asset", key),
-  openAssetsFolder: () => ipcRenderer.invoke("gangdaner-pet:open-assets"),
-  showMenu: () => ipcRenderer.invoke("gangdaner-pet:menu"),
-  startDrag: () => ipcRenderer.send("gangdaner-pet:drag-start"), moveDrag: () => ipcRenderer.send("gangdaner-pet:drag-move"), endDrag: () => ipcRenderer.send("gangdaner-pet:drag-end"),
-  onEvent: cb => ipcRenderer.on("gangdaner-pet:event", (_e, key) => cb(key)), onSettings: cb => ipcRenderer.on("gangdaner-pet:settings", (_e, value) => cb(value))
+  getManifest:()=>ipcRenderer.invoke("gangdaner-pet:get-manifest"), getSettings:()=>ipcRenderer.invoke("gangdaner-pet:get-settings"), updateSettings:p=>ipcRenderer.invoke("gangdaner-pet:update-settings",p),
+  getConversation:()=>ipcRenderer.invoke("gangdaner-pet:get-conversation"), sendChat:t=>ipcRenderer.invoke("gangdaner-pet:send-chat",t), clearMemory:()=>ipcRenderer.invoke("gangdaner-pet:clear-memory"), openChat:()=>ipcRenderer.invoke("gangdaner-pet:open-chat"),
+  sendEvent:k=>ipcRenderer.invoke("gangdaner-pet:send-event",k), replaceAsset:k=>ipcRenderer.invoke("gangdaner-pet:replace-asset",k), openAssetsFolder:()=>ipcRenderer.invoke("gangdaner-pet:open-assets"), showMenu:()=>ipcRenderer.invoke("gangdaner-pet:menu"),
+  notifyState:k=>ipcRenderer.send("gangdaner-pet:state",k), startDrag:()=>ipcRenderer.send("gangdaner-pet:drag-start"),moveDrag:()=>ipcRenderer.send("gangdaner-pet:drag-move"),endDrag:()=>ipcRenderer.send("gangdaner-pet:drag-end"),
+  onEvent:cb=>ipcRenderer.on("gangdaner-pet:event",(_e,v)=>cb(v)), onSettings:cb=>ipcRenderer.on("gangdaner-pet:settings",(_e,v)=>cb(v)), onBubble:cb=>ipcRenderer.on("gangdaner-pet:bubble",(_e,v)=>cb(v)), onState:cb=>ipcRenderer.on("gangdaner-pet:state",(_e,v)=>cb(v))
 });

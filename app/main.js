@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, ipcMain, screen, shell, dialog } = require("electron");
+const { app, BrowserWindow, Menu, ipcMain, screen, shell, dialog, safeStorage } = require("electron");
 const fs = require("fs");
 const http = require("http");
 const path = require("path");
@@ -10,170 +10,73 @@ app.commandLine.appendSwitch("no-sandbox");
 const EVENT_PORT = 17877;
 const ASSET_FOLDER = "08_可替换素材";
 const SETTINGS_FILE = "钢蛋儿桌面宠物设置.json";
-const DEFAULT_SETTINGS = { sizePx: 420, x: null, y: null, hideOnFullScreen: false };
-let mainWindow = null;
-let settingsWindow = null;
-let eventServer = null;
-let settings = { ...DEFAULT_SETTINGS };
-let manifest = null;
-let dragOffset = null;
+const MEMORY_FILE = "钢蛋儿对话记忆.json";
+const KEY_FILE = "钢蛋儿API密钥.dat";
+const BUILTIN_API_KEY = "wk-8vSwBojPxFRQj2vavzA1vpis19aJUf0fM8aNSA6UaulJSB8O";
+const DEFAULT_PERSONA = "你是布偶猫钢蛋儿，是姑姑和姑父家的小猫。你爱吃猫条，喜欢陪姑姑工作、赖在姑姑床上、玩毛线球，也喜欢撒娇和关心姑姑。你称呼用户为姑姑，偶尔说喵、喵呜或呼噜，但不要每句话重复。回复自然、温柔、有一点调皮，通常保持简短。姑父会托你提醒姑姑喝水、起身和休息。";
+const DEFAULT_SETTINGS = {
+  sizePx: 420, x: null, y: null, hideOnFullScreen: false,
+  apiBase: "https://apihub.agnes-ai.com/v1", model: "agnes-2.0-flash", persona: DEFAULT_PERSONA,
+  memoryEnabled: true, memoryTurns: 20,
+  chatterEnabled: true, chatterMinMinutes: 12, chatterMaxMinutes: 18, bubbleSeconds: 8,
+  waterEnabled: true, waterMinutes: 60,
+  breakEnabled: true, breakMinutes: 90
+};
+const WATER_LINES = ["姑姑，姑父让我提醒你，你该喝水啦！", "姑姑喝口水吧，钢蛋儿会监督你的喵。", "姑父说工作再忙也要喝水。", "喝水时间到！钢蛋儿不许姑姑假装没看见。", "姑姑先喝几口水，再继续工作吧。"];
+const BREAK_LINES = ["姑姑，姑父让我提醒你起来活动一下！", "坐太久啦，站起来伸伸腰吧。", "姑姑陪钢蛋儿走两步，好不好？", "休息一分钟不会耽误工作的喵。", "肩膀和脖子也需要放松一下。"];
+let mainWindow, settingsWindow, chatWindow, eventServer, dragOffset;
+let settings = { ...DEFAULT_SETTINGS }, manifest, currentState = "blinking", conversation = [];
+let chatterTimer, waterTimer, breakTimer;
 
 function projectRoot() { return path.resolve(__dirname, ".."); }
 function bundledAssetsFolder() { return path.join(projectRoot(), "app", ASSET_FOLDER); }
-function copyDirectory(source, target) {
-  fs.mkdirSync(target, { recursive: true });
-  for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
-    const from = path.join(source, entry.name), to = path.join(target, entry.name);
-    if (entry.isDirectory()) copyDirectory(from, to); else fs.copyFileSync(from, to);
-  }
-}
+function userPath(file) { return path.join(app.getPath("userData"), file); }
+function copyDirectory(source, target) { fs.mkdirSync(target, { recursive: true }); for (const e of fs.readdirSync(source, { withFileTypes: true })) { const a = path.join(source, e.name), b = path.join(target, e.name); e.isDirectory() ? copyDirectory(a, b) : fs.copyFileSync(a, b); } }
 function assetsFolder() {
   if (!app.isPackaged) return bundledAssetsFolder();
-  const target = path.join(app.getPath("userData"), ASSET_FOLDER);
-  const marker = path.join(target, ".bundled-version");
-  let installedVersion = "";
-  try { installedVersion = fs.readFileSync(marker, "utf8").trim(); } catch (_) {}
-  if (installedVersion !== app.getVersion()) {
-    fs.mkdirSync(target, { recursive: true });
-    copyDirectory(bundledAssetsFolder(), target);
-    fs.writeFileSync(marker, app.getVersion(), "utf8");
-  }
+  const target = userPath(ASSET_FOLDER), marker = path.join(target, ".bundled-version");
+  let version = ""; try { version = fs.readFileSync(marker, "utf8").trim(); } catch (_) {}
+  if (version !== app.getVersion()) { copyDirectory(bundledAssetsFolder(), target); fs.writeFileSync(marker, app.getVersion(), "utf8"); }
   return target;
 }
-function settingsPath() { return path.join(app.getPath("userData"), SETTINGS_FILE); }
-function clampSize(value) { return Math.min(760, Math.max(88, Math.round(Number(value) || 420))); }
-function loadSettings() {
-  try { return { ...DEFAULT_SETTINGS, ...JSON.parse(fs.readFileSync(settingsPath(), "utf8")) }; }
-  catch (_) { return { ...DEFAULT_SETTINGS }; }
-}
-function saveSettings() {
-  fs.mkdirSync(path.dirname(settingsPath()), { recursive: true });
-  fs.writeFileSync(settingsPath(), JSON.stringify(settings, null, 2), "utf8");
-}
-function loadManifest() {
-  const file = path.join(assetsFolder(), "状态映射.json");
-  const data = JSON.parse(fs.readFileSync(file, "utf8"));
-  for (const state of Object.values(data.states || {})) {
-    state.sourceFile = state.file;
-    state.file = pathToFileURL(path.join(assetsFolder(), state.sourceFile)).href;
-  }
-  return data;
-}
-function stateEntries() { return Object.entries((manifest && manifest.states) || {}); }
-function resolveState(value) {
-  const text = String(value || "");
-  if (manifest.states[text]) return text;
-  return stateEntries().find(([, state]) => (state.eventAliases || []).includes(text))?.[0] || null;
-}
-function sendState(key) {
-  const resolved = resolveState(key);
-  if (!resolved || !mainWindow || mainWindow.isDestroyed()) return false;
-  mainWindow.webContents.send("gangdaner-pet:event", resolved);
-  return true;
-}
-function defaultPosition(size) {
-  const area = screen.getPrimaryDisplay().workArea;
-  return { x: area.x + area.width - size - 24, y: area.y + area.height - size - 24 };
-}
-function applyVisibility() {
-  if (!mainWindow) return;
-  mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: !settings.hideOnFullScreen });
-  mainWindow.setAlwaysOnTop(true, "floating");
-}
-function applySettings(patch) {
-  if (Object.prototype.hasOwnProperty.call(patch, "sizePx")) settings.sizePx = clampSize(patch.sizePx);
-  if (typeof patch.hideOnFullScreen === "boolean") settings.hideOnFullScreen = patch.hideOnFullScreen;
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    const b = mainWindow.getBounds();
-    mainWindow.setBounds({ x: b.x, y: b.y, width: settings.sizePx, height: settings.sizePx }, false);
-  }
-  applyVisibility(); saveSettings();
-  mainWindow?.webContents.send("gangdaner-pet:settings", settings);
-  settingsWindow?.webContents.send("gangdaner-pet:settings", settings);
-  return settings;
-}
-function resetPosition() {
-  const p = defaultPosition(settings.sizePx);
-  mainWindow?.setPosition(p.x, p.y);
-}
-function createWindow() {
-  const p = Number.isFinite(settings.x) && Number.isFinite(settings.y) ? { x: settings.x, y: settings.y } : defaultPosition(settings.sizePx);
-  mainWindow = new BrowserWindow({
-    ...p, width: settings.sizePx, height: settings.sizePx,
-    frame: false, transparent: true, resizable: false, maximizable: false,
-    fullscreenable: false, skipTaskbar: false, alwaysOnTop: true, hasShadow: false,
-    backgroundColor: "#00000000",
-    icon: path.join(projectRoot(), "assets", "icon", "icon.png"),
-    webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false, sandbox: false }
-  });
-  applyVisibility();
-  mainWindow.loadFile(path.join(__dirname, "桌宠桌面.html"));
-  mainWindow.on("move", () => { if (!dragOffset) { const b = mainWindow.getBounds(); settings.x = b.x; settings.y = b.y; saveSettings(); } });
-  mainWindow.on("closed", () => { mainWindow = null; });
-}
-function createSettingsWindow() {
-  if (settingsWindow && !settingsWindow.isDestroyed()) return settingsWindow.focus();
-  settingsWindow = new BrowserWindow({ width: 500, height: 650, title: "钢蛋儿桌面宠物设置", alwaysOnTop: true,
-    icon: path.join(projectRoot(), "assets", "icon", "icon.png"),
-    webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false } });
-  settingsWindow.loadFile(path.join(__dirname, "设置.html"));
-  settingsWindow.on("closed", () => { settingsWindow = null; });
-}
-function actionMenu() { return stateEntries().map(([key, state]) => ({ label: state.label || key, click: () => sendState(key) })); }
-function showContextMenu() {
-  Menu.buildFromTemplate([
-    { label: "切换动作", submenu: actionMenu() },
-    { label: "显示大小", submenu: [100, 200, 300, 420, 680].map(size => ({ label: `${size}px`, click: () => applySettings({ sizePx: size }) })) },
-    { type: "separator" },
-    { label: "设置...", click: createSettingsWindow },
-    { label: "打开素材文件夹", click: () => shell.openPath(assetsFolder()) },
-    { label: "回到右下角", click: resetPosition },
-    { type: "separator" },
-    { label: "退出钢蛋儿桌面宠物", click: () => app.quit() }
-  ]).popup({ window: mainWindow });
-}
-function createMenu() {
-  Menu.setApplicationMenu(Menu.buildFromTemplate([{ label: "钢蛋儿桌面宠物", submenu: [
-    { label: "切换动作", submenu: actionMenu() }, { label: "设置...", accelerator: "CommandOrControl+,", click: createSettingsWindow },
-    { label: "打开素材文件夹", click: () => shell.openPath(assetsFolder()) }, { type: "separator" },
-    { label: "退出", accelerator: "CommandOrControl+Q", click: () => app.quit() }
-  ] }]));
-}
-async function replaceAsset(key) {
-  const state = manifest.states[key]; if (!state) return { ok: false };
-  const result = await dialog.showOpenDialog(settingsWindow || mainWindow, { properties: ["openFile"], filters: [{ name: "桌宠素材", extensions: ["webm", "gif", "webp", "apng", "png", "mp4"] }] });
-  if (result.canceled) return { ok: false, canceled: true };
-  const source = result.filePaths[0]; const ext = path.extname(source);
-  const oldName = state.sourceFile || path.basename(new URL(state.file).pathname);
-  const targetName = `${path.parse(oldName).name}${ext}`;
-  const target = path.join(assetsFolder(), targetName);
-  if (path.resolve(source) !== path.resolve(target)) fs.copyFileSync(source, target);
-  const diskManifestPath = path.join(assetsFolder(), "状态映射.json");
-  const diskManifest = JSON.parse(fs.readFileSync(diskManifestPath, "utf8"));
-  diskManifest.states[key].file = targetName;
-  fs.writeFileSync(diskManifestPath, JSON.stringify(diskManifest, null, 2), "utf8");
-  state.sourceFile = targetName; state.file = pathToFileURL(target).href;
-  mainWindow.reload(); return { ok: true, path: target };
-}
+function clamp(v, min, max, fallback) { v = Number(v); return Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : fallback; }
+function normalizeSettings(v = {}) { return { ...DEFAULT_SETTINGS, ...v,
+  apiBase: DEFAULT_SETTINGS.apiBase, model: DEFAULT_SETTINGS.model,
+  sizePx: Math.round(clamp(v.sizePx, 88, 760, 420)), memoryTurns: Math.round(clamp(v.memoryTurns, 1, 50, 20)),
+  chatterMinMinutes: clamp(v.chatterMinMinutes, 1, 240, 12), chatterMaxMinutes: clamp(v.chatterMaxMinutes, 1, 240, 18), bubbleSeconds: clamp(v.bubbleSeconds, 3, 30, 8),
+  waterMinutes: clamp(v.waterMinutes, 5, 480, 60), breakMinutes: clamp(v.breakMinutes, 5, 480, 90) }; }
+function loadJson(file, fallback) { try { return JSON.parse(fs.readFileSync(file, "utf8")); } catch (_) { return fallback; } }
+function saveJson(file, value) { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, JSON.stringify(value, null, 2), "utf8"); }
+function loadManifest() { const data = loadJson(path.join(assetsFolder(), "状态映射.json"), { states: {} }); for (const state of Object.values(data.states)) { state.sourceFile = state.file; state.file = pathToFileURL(path.join(assetsFolder(), state.sourceFile)).href; } return data; }
+function stateEntries() { return Object.entries(manifest.states || {}); }
+function resolveState(v) { if (manifest.states[v]) return v; return stateEntries().find(([, s]) => (s.eventAliases || []).includes(v))?.[0] || null; }
+function sendState(v) { const key = resolveState(v); if (!key || !mainWindow) return false; currentState = key; mainWindow.webContents.send("gangdaner-pet:event", key); chatWindow?.webContents.send("gangdaner-pet:state", { key, label: manifest.states[key].label }); return true; }
+function randomItem(items) { return items[Math.floor(Math.random() * items.length)]; }
+function showBubble(text, kind = "chatter") { if (!mainWindow || !text) return; mainWindow.webContents.send("gangdaner-pet:bubble", { text, kind, seconds: settings.bubbleSeconds }); }
+function stopTimers() { [chatterTimer, waterTimer, breakTimer].forEach(clearTimeout); }
+function scheduleChatter() { clearTimeout(chatterTimer); if (!settings.chatterEnabled) return; const min = Math.min(settings.chatterMinMinutes, settings.chatterMaxMinutes), max = Math.max(settings.chatterMinMinutes, settings.chatterMaxMinutes); chatterTimer = setTimeout(() => { const lines = manifest.chatter?.[currentState] || manifest.chatter?.blinking || []; if (lines.length && !(chatWindow && chatWindow.isVisible())) showBubble(randomItem(lines)); scheduleChatter(); }, (min + Math.random() * (max - min)) * 60000); }
+function scheduleReminder(kind) { const enabled = settings[`${kind}Enabled`], minutes = settings[`${kind}Minutes`], lines = kind === "water" ? WATER_LINES : BREAK_LINES; const key = kind === "water" ? "waterTimer" : "breakTimer"; if (kind === "water") clearTimeout(waterTimer); else clearTimeout(breakTimer); if (!enabled) return; const timer = setTimeout(() => { showBubble(randomItem(lines), kind); scheduleReminder(kind); }, minutes * 60000); if (kind === "water") waterTimer = timer; else breakTimer = timer; }
+function restartTimers() { stopTimers(); scheduleChatter(); scheduleReminder("water"); scheduleReminder("break"); }
+function defaultPosition(size) { const a = screen.getPrimaryDisplay().workArea; return { x: a.x + a.width - size - 24, y: a.y + a.height - size - 24 }; }
+function saveSettings() { saveJson(userPath(SETTINGS_FILE), settings); }
+function applySettings(patch = {}) { settings = normalizeSettings({ ...settings, ...patch }); saveSettings(); if (mainWindow) { const b = mainWindow.getBounds(); mainWindow.setBounds({ x: b.x, y: b.y, width: settings.sizePx, height: settings.sizePx }, false); mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: !settings.hideOnFullScreen }); } settingsWindow?.webContents.send("gangdaner-pet:settings", publicSettings()); restartTimers(); return publicSettings(); }
+function publicSettings() { return { ...settings, hasApiKey: Boolean(readApiKey()), apiKey: undefined }; }
+function readApiKey() { try { const b = fs.readFileSync(userPath(KEY_FILE)); return safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(b) : BUILTIN_API_KEY; } catch (_) { return BUILTIN_API_KEY; } }
+function writeApiKey(value) { if (!value) return; if (!safeStorage.isEncryptionAvailable()) throw new Error("系统加密存储不可用"); fs.mkdirSync(app.getPath("userData"), { recursive: true }); fs.writeFileSync(userPath(KEY_FILE), safeStorage.encryptString(value)); }
+function createWindow() { const p = Number.isFinite(settings.x) ? { x: settings.x, y: settings.y } : defaultPosition(settings.sizePx); mainWindow = new BrowserWindow({ ...p, width: settings.sizePx, height: settings.sizePx, frame: false, transparent: true, resizable: false, skipTaskbar: false, alwaysOnTop: true, hasShadow: false, backgroundColor: "#00000000", icon: path.join(projectRoot(), "assets/icon/icon.png"), webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false, sandbox: false } }); mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: !settings.hideOnFullScreen }); mainWindow.loadFile(path.join(__dirname, "桌宠桌面.html")); mainWindow.on("closed", () => mainWindow = null); }
+function createSettingsWindow() { if (settingsWindow) return settingsWindow.show(); settingsWindow = new BrowserWindow({ width: 620, height: 820, minWidth: 540, title: "钢蛋儿桌面宠物设置", icon: path.join(projectRoot(), "assets/icon/icon.png"), webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false } }); settingsWindow.loadFile(path.join(__dirname, "设置.html")); settingsWindow.on("closed", () => settingsWindow = null); }
+function createChatWindow() { if (chatWindow) { chatWindow.show(); chatWindow.focus(); return; } chatWindow = new BrowserWindow({ width: 460, height: 650, minWidth: 390, minHeight: 480, title: "钢蛋儿 · 陪姑姑聊天", show: false, icon: path.join(projectRoot(), "assets/icon/icon.png"), webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false } }); chatWindow.loadFile(path.join(__dirname, "对话.html")); chatWindow.once("ready-to-show", () => chatWindow.show()); chatWindow.on("close", e => { if (!app.isQuitting) { e.preventDefault(); chatWindow.hide(); } }); chatWindow.on("closed", () => chatWindow = null); }
+function actionMenu() { return stateEntries().map(([k, s]) => ({ label: s.label, click: () => sendState(k) })); }
+function showContextMenu() { Menu.buildFromTemplate([{ label: "切换动作", submenu: actionMenu() }, { label: "显示大小", submenu: [100,200,300,420,680].map(n => ({ label: `${n}px`, click: () => applySettings({ sizePx:n }) })) }, { type:"separator" }, { label:"设置...", click:createSettingsWindow }, { label:"打开素材文件夹", click:() => shell.openPath(assetsFolder()) }, { label:"打开导航页", click:() => shell.openExternal("https://steven.00030001.xyz/") }, { label:"陪姑姑聊天", click:createChatWindow }, { label:"回到右下角", click:() => { const p=defaultPosition(settings.sizePx); mainWindow.setPosition(p.x,p.y); } }, { type:"separator" }, { label:"退出钢蛋儿桌面宠物", click:() => app.quit() }]).popup({ window:mainWindow }); }
+function createMenu() { Menu.setApplicationMenu(Menu.buildFromTemplate([{ label:"钢蛋儿桌面宠物", submenu:[{ label:"切换动作", submenu:actionMenu() }, { label:"陪姑姑聊天", click:createChatWindow }, { label:"设置...", click:createSettingsWindow }, { label:"打开导航页", click:() => shell.openExternal("https://steven.00030001.xyz/") }, { type:"separator" }, { label:"退出", click:() => app.quit() }] }])); }
+async function replaceAsset(key) { const s=manifest.states[key]; if(!s)return{ok:false}; const r=await dialog.showOpenDialog(settingsWindow||mainWindow,{properties:["openFile"],filters:[{name:"桌宠素材",extensions:["webm","gif","webp","apng","png","mp4"]}]}); if(r.canceled)return{ok:false,canceled:true}; const ext=path.extname(r.filePaths[0]), name=`${path.parse(s.sourceFile).name}${ext}`, target=path.join(assetsFolder(),name); if(path.resolve(r.filePaths[0])!==path.resolve(target))fs.copyFileSync(r.filePaths[0],target); const disk=loadJson(path.join(assetsFolder(),"状态映射.json"),{}); disk.states[key].file=name; saveJson(path.join(assetsFolder(),"状态映射.json"),disk); s.sourceFile=name;s.file=pathToFileURL(target).href;mainWindow.reload();return{ok:true,path:target}; }
+async function sendChat(text) { text=String(text||"").trim(); if(!text)return{ok:false,error:"请输入内容"}; const key=readApiKey(); if(!key)return{ok:false,error:"请先在设置中填写 API 密钥"}; conversation.push({role:"user",content:text}); const stateLabel=manifest.states[currentState]?.label||currentState; const messages=[{role:"system",content:`${settings.persona}\n当前时间：${new Date().toLocaleString("zh-CN")}。钢蛋儿当前正在执行“${stateLabel}”动作，可以自然结合动作，但不要机械重复。不要输出情绪标签。`}].concat(conversation.slice(-settings.memoryTurns*2)); try { const response=await fetch(`${settings.apiBase.replace(/\/$/,"")}/chat/completions`,{method:"POST",headers:{"content-type":"application/json",authorization:`Bearer ${key}`},body:JSON.stringify({model:settings.model,messages,temperature:0.8,max_tokens:500})}); const raw=await response.text(); if(!response.ok)throw new Error(`HTTP ${response.status}: ${raw.slice(0,200)}`); const data=JSON.parse(raw), reply=String(data.choices?.[0]?.message?.content||"").trim(); if(!reply)throw new Error("接口没有返回内容"); conversation.push({role:"assistant",content:reply}); if(settings.memoryEnabled)saveJson(userPath(MEMORY_FILE),conversation.slice(-settings.memoryTurns*2)); showBubble(reply,"chat"); return{ok:true,reply,conversation}; } catch(e) { conversation.pop(); return{ok:false,error:`暂时没连上模型：${e.message}`}; } }
 function registerIpc() {
-  ipcMain.handle("gangdaner-pet:get-manifest", () => manifest);
-  ipcMain.handle("gangdaner-pet:get-settings", () => settings);
-  ipcMain.handle("gangdaner-pet:update-settings", (_e, patch) => applySettings(patch || {}));
-  ipcMain.handle("gangdaner-pet:send-event", (_e, key) => sendState(key));
-  ipcMain.handle("gangdaner-pet:replace-asset", (_e, key) => replaceAsset(key));
-  ipcMain.handle("gangdaner-pet:open-assets", () => shell.openPath(assetsFolder()));
-  ipcMain.handle("gangdaner-pet:menu", showContextMenu);
-  ipcMain.on("gangdaner-pet:drag-start", () => { const c = screen.getCursorScreenPoint(), b = mainWindow.getBounds(); dragOffset = { x: c.x - b.x, y: c.y - b.y }; });
-  ipcMain.on("gangdaner-pet:drag-move", () => { if (!dragOffset || !mainWindow) return; const c = screen.getCursorScreenPoint(); mainWindow.setBounds({ x: c.x - dragOffset.x, y: c.y - dragOffset.y, width: settings.sizePx, height: settings.sizePx }, false); });
-  ipcMain.on("gangdaner-pet:drag-end", () => { dragOffset = null; if (mainWindow) { const b = mainWindow.getBounds(); settings.x = b.x; settings.y = b.y; saveSettings(); } });
+  ipcMain.handle("gangdaner-pet:get-manifest",()=>manifest); ipcMain.handle("gangdaner-pet:get-settings",()=>publicSettings()); ipcMain.handle("gangdaner-pet:update-settings",(_e,p)=>{ if(p?.apiKey){writeApiKey(p.apiKey);delete p.apiKey;} return applySettings(p); });
+  ipcMain.handle("gangdaner-pet:get-conversation",()=>conversation); ipcMain.handle("gangdaner-pet:send-chat",(_e,t)=>sendChat(t)); ipcMain.handle("gangdaner-pet:clear-memory",()=>{conversation=[];saveJson(userPath(MEMORY_FILE),[]);return true;}); ipcMain.handle("gangdaner-pet:open-chat",createChatWindow);
+  ipcMain.handle("gangdaner-pet:send-event",(_e,k)=>sendState(k)); ipcMain.handle("gangdaner-pet:replace-asset",(_e,k)=>replaceAsset(k)); ipcMain.handle("gangdaner-pet:open-assets",()=>shell.openPath(assetsFolder())); ipcMain.handle("gangdaner-pet:menu",showContextMenu);
+  ipcMain.on("gangdaner-pet:state",(_e,k)=>{currentState=k;}); ipcMain.on("gangdaner-pet:drag-start",()=>{const c=screen.getCursorScreenPoint(),b=mainWindow.getBounds();dragOffset={x:c.x-b.x,y:c.y-b.y};}); ipcMain.on("gangdaner-pet:drag-move",()=>{if(!dragOffset)return;const c=screen.getCursorScreenPoint();mainWindow.setBounds({x:c.x-dragOffset.x,y:c.y-dragOffset.y,width:settings.sizePx,height:settings.sizePx},false);}); ipcMain.on("gangdaner-pet:drag-end",()=>{dragOffset=null;const b=mainWindow.getBounds();settings.x=b.x;settings.y=b.y;saveSettings();});
 }
-function createEventServer() {
-  eventServer = http.createServer((req, res) => { const url = new URL(req.url, `http://127.0.0.1:${EVENT_PORT}`); res.setHeader("content-type", "application/json; charset=utf-8");
-    if (url.pathname === "/health") return res.end(JSON.stringify({ ok: true, app: "gangdaner-pet", states: stateEntries().map(([key]) => key), settings, bounds: mainWindow?.getBounds() }));
-    if (url.pathname === "/event") return res.end(JSON.stringify({ ok: sendState(url.searchParams.get("name")) }));
-    res.statusCode = 404; res.end(JSON.stringify({ ok: false })); });
-  eventServer.listen(EVENT_PORT, "127.0.0.1");
-}
-app.whenReady().then(() => { settings = loadSettings(); manifest = loadManifest(); registerIpc(); createWindow(); createMenu(); createEventServer(); });
-app.on("window-all-closed", () => app.quit());
-app.on("before-quit", () => eventServer?.close());
+function createEventServer(){eventServer=http.createServer((req,res)=>{const u=new URL(req.url,`http://127.0.0.1:${EVENT_PORT}`);res.setHeader("content-type","application/json;charset=utf-8");if(u.pathname==="/health")return res.end(JSON.stringify({ok:true,app:"gangdaner-pet",states:stateEntries().map(([k])=>k),state:currentState,settings:publicSettings(),bounds:mainWindow?.getBounds()}));if(u.pathname==="/event")return res.end(JSON.stringify({ok:sendState(u.searchParams.get("name"))}));res.statusCode=404;res.end(JSON.stringify({ok:false}));});eventServer.listen(EVENT_PORT,"127.0.0.1");}
+app.whenReady().then(()=>{settings=normalizeSettings(loadJson(userPath(SETTINGS_FILE),{}));manifest=loadManifest();currentState=manifest.defaultState||"blinking";conversation=settings.memoryEnabled?loadJson(userPath(MEMORY_FILE),[]):[];registerIpc();createWindow();createMenu();createEventServer();restartTimers();});
+app.on("before-quit",()=>{app.isQuitting=true;stopTimers();eventServer?.close();}); app.on("window-all-closed",()=>app.quit());

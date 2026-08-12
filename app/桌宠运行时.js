@@ -8,6 +8,7 @@
       if (!media || (media.tagName === "VIDEO") !== video) { media?.remove(); media = document.createElement(video ? "video" : "img"); media.className = "gangdaner-pet-video"; media.draggable = false; root.appendChild(media); }
       media.src = state.file; active = key; root.dataset.state = key;
       if (video) { media.loop = state.loop !== false; media.muted = true; media.autoplay = true; media.playsInline = true; media.play().catch(() => {}); }
+      window.gangdanerPet?.notifyState(key);
       return true;
     }
     setState(manifest.defaultState || Object.keys(manifest.states)[0]);
