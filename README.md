@@ -35,4 +35,4 @@ python scripts/black_background_to_alpha.py "黑底视频.webm" "app/08_可替�
 python scripts/black_background_to_alpha.py "黑底图片.png" "app/08_可替换素材/新动作.png"
 ```
 
-可用 `--similarity` 调整黑色容差、`--blend` 调整边缘柔化。默认采用兼顾黑色颗粒清理和深色毛发保留的 `0.035 / 0.010`；角色本身包含大面积纯黑色时应减小 `--similarity`。
+可用 `--similarity` 调整黑色容差、`--blend` 调整边缘柔化，使用 `--alpha-cutoff` 清零压缩产生的低透明度背景，从而消除素材四周的浅灰方框。默认参数优先保护深色毛发。
