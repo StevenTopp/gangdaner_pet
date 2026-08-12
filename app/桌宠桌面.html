@@ -39,33 +39,151 @@
       animation: none !important;
       filter: drop-shadow(0 16px 28px rgba(15, 23, 42, 0.18));
     }
+    @keyframes petPatBounce {
+      0% { transform: scale(1); }
+      30% { transform: scale(1.08) translateY(-6px); }
+      65% { transform: scale(0.96) translateY(3px); }
+      100% { transform: scale(1); }
+    }
+    .pat-bounce {
+      animation: petPatBounce 0.35s cubic-bezier(0.25, 1.4, 0.5, 1);
+    }
     #bubble { position:fixed; left:5%; right:5%; top:2%; z-index:5; padding:10px 13px; border-radius:16px; background:rgba(255,255,255,.96); color:#28344d; font:600 13px/1.45 "Microsoft YaHei UI",sans-serif; box-shadow:0 8px 26px rgba(31,45,76,.18); opacity:0; transform:translateY(-8px); transition:.2s; pointer-events:none; text-align:center; }
     #bubble.show { opacity:1; transform:none; pointer-events:auto; cursor:pointer; }
     #bubble.reminder { background:rgba(255,248,222,.98); color:#795319; }
+
+    #quickChatBox {
+      position: fixed;
+      left: 5%;
+      right: 5%;
+      top: 2%;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 8px 5px 12px;
+      border-radius: 20px;
+      background: rgba(255, 255, 255, 0.92);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(255, 255, 255, 0.7);
+      box-shadow: 0 10px 28px rgba(31, 45, 76, 0.22);
+      opacity: 0;
+      transform: translateY(-10px) scale(0.96);
+      transition: opacity 0.2s ease, transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+      pointer-events: none;
+    }
+    #quickChatBox.show {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+      pointer-events: auto;
+    }
+    #quickChatInput {
+      flex: 1;
+      border: none;
+      outline: none;
+      background: transparent;
+      color: #1e293b;
+      font: 600 13px/1.4 "Microsoft YaHei UI", sans-serif;
+      padding: 4px 0;
+    }
+    #quickChatInput::placeholder {
+      color: #94a3b8;
+      font-weight: 400;
+    }
+    #quickChatSend {
+      border: none;
+      outline: none;
+      background: #3b82f6;
+      color: #ffffff;
+      font: 600 12px/1 "Microsoft YaHei UI", sans-serif;
+      padding: 6px 12px;
+      border-radius: 14px;
+      cursor: pointer;
+      transition: background 0.15s;
+      white-space: nowrap;
+    }
+    #quickChatSend:hover {
+      background: #2563eb;
+    }
   </style>
 </head>
 <body>
   <div id="petRoot"></div>
   <div id="bubble"></div>
+  <div id="quickChatBox">
+    <input type="text" id="quickChatInput" placeholder="想对钢蛋儿说什么？" maxlength="150" autocomplete="off" />
+    <button id="quickChatSend">发送</button>
+  </div>
   <script src="./桌宠运行时.js"></script>
   <script>
     let pet;
+    const petRoot = document.getElementById("petRoot");
     window.gangdanerPet.getManifest().then((manifest) => {
-      pet = window.createGangdanerPet(document.getElementById("petRoot"), manifest);
+      pet = window.createGangdanerPet(petRoot, manifest);
       window.gangdanerPet.onEvent((key) => pet.setState(key));
     });
     const bubble=document.getElementById("bubble"); let bubbleTimer;
     window.gangdanerPet.onBubble(({text,kind,seconds})=>{bubble.textContent=text;bubble.className=`show ${kind==='chatter'||kind==='chat'?'':'reminder'}`;clearTimeout(bubbleTimer);bubbleTimer=setTimeout(()=>bubble.className="",Number(seconds||8)*1000);});
     bubble.addEventListener("click",()=>{bubble.className="";window.gangdanerPet.openChat();});
 
+    // Quick Chat UI Handling
+    const quickChatBox = document.getElementById("quickChatBox");
+    const quickChatInput = document.getElementById("quickChatInput");
+    const quickChatSend = document.getElementById("quickChatSend");
+
+    function openQuickChat() {
+      bubble.className = ""; // Hide bubble if showing
+      quickChatBox.classList.add("show");
+      quickChatInput.focus();
+    }
+    function closeQuickChat() {
+      quickChatBox.classList.remove("show");
+      quickChatInput.value = "";
+    }
+
+    async function submitQuickChat() {
+      const text = quickChatInput.value.trim();
+      if (!text) return;
+      closeQuickChat();
+      window.gangdanerPet.onBubble({ text: "钢蛋儿听到了，正在思考喵...", kind: "chat", seconds: 4 });
+      const res = await window.gangdanerPet.sendChat(text);
+      if (!res.ok) {
+        window.gangdanerPet.onBubble({ text: res.error || "暂时没连上模型喵", kind: "reminder", seconds: 6 });
+      }
+    }
+
+    quickChatSend.addEventListener("click", submitQuickChat);
+    quickChatInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        submitQuickChat();
+      } else if (e.key === "Escape") {
+        closeQuickChat();
+      }
+    });
+
+    // Multi-click detection (Double-click = Patting, Triple-click = Header Chat Box)
     const DRAG_THRESHOLD = 5;
     let pointerId = null;
     let startX = 0;
     let startY = 0;
     let dragging = false;
+    let clickCount = 0;
+    let clickTimer = null;
+
+    function triggerPattingEffect() {
+      petRoot.classList.remove("pat-bounce");
+      void petRoot.offsetWidth; // Force reflow
+      petRoot.classList.add("pat-bounce");
+      setTimeout(() => petRoot.classList.remove("pat-bounce"), 360);
+      window.gangdanerPet.triggerPatting();
+    }
 
     window.addEventListener("pointerdown", (event) => {
       if (event.button !== 0 || !window.gangdanerPet) return;
+      if (quickChatBox.contains(event.target)) return;
+
       pointerId = event.pointerId;
       startX = event.screenX;
       startY = event.screenY;
@@ -85,7 +203,24 @@
 
     function endDrag(event) {
       if (pointerId !== event.pointerId) return;
-      if (dragging && window.gangdanerPet) window.gangdanerPet.endDrag();
+      if (dragging && window.gangdanerPet) {
+        window.gangdanerPet.endDrag();
+      } else if (!dragging) {
+        clickCount++;
+        if (clickCount === 3) {
+          clearTimeout(clickTimer);
+          clickCount = 0;
+          openQuickChat();
+        } else {
+          clearTimeout(clickTimer);
+          clickTimer = setTimeout(() => {
+            if (clickCount === 2) {
+              triggerPattingEffect();
+            }
+            clickCount = 0;
+          }, 260);
+        }
+      }
       document.body.classList.remove("dragging");
       try { document.body.releasePointerCapture(pointerId); } catch (_) {}
       pointerId = null;
