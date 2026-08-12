@@ -1,0 +1,29 @@
+{
+  "name": "gangdaner-pet",
+  "version": "1.0.0",
+  "private": true,
+  "description": "钢蛋儿桌面宠物",
+  "main": "app/main.js",
+  "author": "钢蛋儿桌面宠物 contributors",
+  "scripts": {
+    "start": "electron .",
+    "check": "node --check app/main.js && node --check app/preload.js && node --check app/桌宠运行时.js",
+    "dist:win": "electron-builder --win portable --publish never"
+  },
+  "build": {
+    "appId": "com.gangdaner.desktop-pet",
+    "productName": "钢蛋儿桌面宠物",
+    "directories": { "output": "dist" },
+    "files": ["app/**/*", "assets/**/*", "package.json"],
+    "extraMetadata": { "main": "app/main.js" },
+    "win": {
+      "target": [{ "target": "portable", "arch": ["x64"] }],
+      "icon": "assets/icon/icon.ico",
+      "artifactName": "钢蛋儿桌面宠物.exe"
+    }
+  },
+  "devDependencies": {
+    "electron": "39.1.2",
+    "electron-builder": "^26.0.12"
+  }
+}

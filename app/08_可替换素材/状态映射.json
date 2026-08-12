@@ -1,0 +1,13 @@
+{
+  "schema": "gangdaner-pet-state-map/v1",
+  "name": "钢蛋儿桌面宠物",
+  "defaultState": "playing_yarn",
+  "states": {
+    "playing_yarn": {
+      "label": "玩毛线球",
+      "file": "玩毛线球.webm",
+      "loop": true,
+      "eventAliases": []
+    }
+  }
+}
