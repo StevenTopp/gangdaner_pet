@@ -6,6 +6,7 @@
   <title>钢蛋儿桌面宠物</title>
   <style>
     * { box-sizing: border-box; }
+    :root { --pet-size: 420px; }
     html, body, #petRoot {
       position: fixed;
       inset: 0;
@@ -24,14 +25,15 @@
     body.dragging { cursor: grabbing; }
     .gangdaner-pet-video {
       position: absolute;
-      left: 0;
-      right: 0;
+      left: 50%;
+      right: auto;
+      top: auto;
       bottom: 0;
-      top: 26%;
-      width: 100% !important;
-      height: 74% !important;
-      max-width: 100% !important;
-      max-height: 74% !important;
+      width: var(--pet-size) !important;
+      height: calc(var(--pet-size) * 0.74) !important;
+      max-width: var(--pet-size) !important;
+      max-height: calc(var(--pet-size) * 0.74) !important;
+      margin-left: calc(var(--pet-size) / -2);
       display: block;
       object-fit: contain;
       object-position: bottom center;
@@ -56,7 +58,7 @@
       position: fixed;
       left: 4%;
       right: 4%;
-      bottom: 75%;
+      bottom: calc(var(--pet-size) * 0.74 + 6px);
       z-index: 5;
       padding: 9px 12px;
       border-radius: 15px;
@@ -80,7 +82,7 @@
       position: fixed;
       left: 4%;
       right: 4%;
-      bottom: 75%;
+      bottom: calc(var(--pet-size) * 0.74 + 6px);
       z-index: 10;
       display: flex;
       align-items: center;
@@ -143,6 +145,12 @@
   <script src="./桌宠运行时.js"></script>
   <script>
     let pet;
+    let petSize = 420;
+    function applyPetSize() {
+      document.documentElement.style.setProperty("--pet-size", petSize + "px");
+    }
+    window.gangdanerPet.getSettings().then((s) => { petSize = s.sizePx; applyPetSize(); });
+    window.gangdanerPet.onSettings((s) => { petSize = s.sizePx; applyPetSize(); });
     const petRoot = document.getElementById("petRoot");
     window.gangdanerPet.getManifest().then((manifest) => {
       pet = window.createGangdanerPet(petRoot, manifest);
@@ -156,6 +164,25 @@
     const quickChatBox = document.getElementById("quickChatBox");
     const quickChatInput = document.getElementById("quickChatInput");
     const quickChatSend = document.getElementById("quickChatSend");
+
+    function interactiveRects() {
+      const rects = [];
+      const left = (window.innerWidth - petSize) / 2;
+      rects.push({ left, top: window.innerHeight - petSize, right: left + petSize, bottom: window.innerHeight });
+      if (bubble.classList.contains("show")) rects.push(bubble.getBoundingClientRect());
+      if (quickChatBox.classList.contains("show")) rects.push(quickChatBox.getBoundingClientRect());
+      return rects;
+    }
+    function updateMouseIgnore(x, y) {
+      if (dragging) {
+        window.gangdanerPet.setIgnoreMouse(false);
+        return;
+      }
+      const inside = interactiveRects().some((r) => x >= r.left && x <= r.right && y >= r.top && y <= r.bottom);
+      window.gangdanerPet.setIgnoreMouse(!inside);
+    }
+    window.addEventListener("mousemove", (event) => updateMouseIgnore(event.clientX, event.clientY));
+    window.addEventListener("mouseleave", () => { if (!dragging) window.gangdanerPet.setIgnoreMouse(true); });
 
     function openQuickChat() {
       bubble.className = ""; // Hide bubble if showing
