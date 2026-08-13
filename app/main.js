@@ -44,6 +44,8 @@ function startRunningMovement() {
   const initialSize = settings.sizePx || 420;
   currentLapTraveled = 0;
   currentLapMaxDistance = Math.floor(FIXED_LAP_DISTANCE * (initialSize / 420.0));
+  let currentRealX = mainWindow.getBounds().x;
+
   mainWindow.webContents.send("gangdaner-pet:run-direction", runDirection);
 
   runMovementTimer = setInterval(() => {
@@ -62,22 +64,22 @@ function startRunningMovement() {
     const minX = workArea.x;
     const maxX = workArea.x + workArea.width - bounds.width;
 
-    let nextX = bounds.x + runDirection * moveSpeed;
+    currentRealX += runDirection * moveSpeed;
     currentLapTraveled += moveSpeed;
 
     let shouldReverse = false;
 
-    if (nextX <= minX) {
-      nextX = minX;
+    if (currentRealX <= minX) {
+      currentRealX = minX;
       shouldReverse = true;
-    } else if (nextX >= maxX) {
-      nextX = maxX;
+    } else if (currentRealX >= maxX) {
+      currentRealX = maxX;
       shouldReverse = true;
     } else if (currentLapTraveled >= currentLapMaxDistance) {
       shouldReverse = true;
     }
 
-    mainWindow.setPosition(Math.round(nextX), bounds.y);
+    mainWindow.setPosition(Math.round(currentRealX), bounds.y);
 
     if (shouldReverse) {
       runDirection = -runDirection;
