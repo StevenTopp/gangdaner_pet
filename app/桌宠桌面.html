@@ -177,7 +177,7 @@
       return rects;
     }
     function updateMouseIgnore(x, y) {
-      if (dragging) {
+      if (dragging || pointerId !== null) {
         window.gangdanerPet.setIgnoreMouse(false);
         return;
       }
@@ -185,7 +185,7 @@
       window.gangdanerPet.setIgnoreMouse(!inside);
     }
     window.addEventListener("mousemove", (event) => updateMouseIgnore(event.clientX, event.clientY));
-    window.addEventListener("mouseleave", () => { if (!dragging) window.gangdanerPet.setIgnoreMouse(true); });
+    window.addEventListener("mouseleave", () => { if (!dragging && pointerId === null) window.gangdanerPet.setIgnoreMouse(true); });
 
     function openQuickChat() {
       bubble.className = ""; // Hide bubble if showing
@@ -251,7 +251,10 @@
     }
 
     window.addEventListener("pointerdown", (event) => {
-      if (window.gangdanerPet) window.gangdanerPet.tryWakeUp();
+      if (window.gangdanerPet) {
+        window.gangdanerPet.setIgnoreMouse(false);
+        window.gangdanerPet.tryWakeUp();
+      }
 
       if (quickChatBox.classList.contains("show") && !quickChatBox.contains(event.target)) {
         closeQuickChat();

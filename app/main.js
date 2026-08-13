@@ -38,15 +38,16 @@ let currentLapTraveled = 0;
 let currentLapMaxDistance = 350;
 let currentRealX = 0;
 
+let runPivotX = 0;
+
 function startRunningMovement() {
   stopRunningMovement();
   if (!mainWindow || currentState !== "running") return;
 
   const FIXED_LAP_DISTANCE = 350;
   const initialSize = settings.sizePx || 420;
-  currentLapTraveled = 0;
-  currentLapMaxDistance = Math.floor(FIXED_LAP_DISTANCE * (initialSize / 420.0));
-  currentRealX = mainWindow.getBounds().x;
+  runPivotX = mainWindow.getBounds().x;
+  currentRealX = runPivotX;
 
   mainWindow.webContents.send("gangdaner-pet:run-direction", runDirection);
 
@@ -58,12 +59,13 @@ function startRunningMovement() {
 
     const bounds = mainWindow.getBounds();
     if (isDraggingWindow) {
-      currentRealX = bounds.x;
+      runPivotX = currentRealX = bounds.x;
       return;
     }
 
     const currentSize = settings.sizePx || 420;
     const moveSpeed = Math.max(0.7, 2.8 * (currentSize / 420.0));
+    const halfSpan = Math.floor(FIXED_LAP_DISTANCE * (currentSize / 420.0));
 
     const primaryDisplay = screen.getPrimaryDisplay();
     const workArea = primaryDisplay.workArea;
@@ -71,18 +73,17 @@ function startRunningMovement() {
     const minX = workArea.x;
     const maxX = workArea.x + workArea.width - bounds.width;
 
-    currentRealX += runDirection * moveSpeed;
-    currentLapTraveled += moveSpeed;
+    const leftLimit = Math.max(minX, runPivotX - halfSpan);
+    const rightLimit = Math.min(maxX, runPivotX + halfSpan);
 
+    currentRealX += runDirection * moveSpeed;
     let shouldReverse = false;
 
-    if (currentRealX <= minX) {
-      currentRealX = minX;
+    if (runDirection === 1 && currentRealX >= rightLimit) {
+      currentRealX = rightLimit;
       shouldReverse = true;
-    } else if (currentRealX >= maxX) {
-      currentRealX = maxX;
-      shouldReverse = true;
-    } else if (currentLapTraveled >= currentLapMaxDistance) {
+    } else if (runDirection === -1 && currentRealX <= leftLimit) {
+      currentRealX = leftLimit;
       shouldReverse = true;
     }
 
@@ -90,8 +91,6 @@ function startRunningMovement() {
 
     if (shouldReverse) {
       runDirection = -runDirection;
-      currentLapTraveled = 0;
-      currentLapMaxDistance = Math.floor(FIXED_LAP_DISTANCE * (currentSize / 420.0));
       mainWindow.webContents.send("gangdaner-pet:run-direction", runDirection);
     }
   }, 30);
