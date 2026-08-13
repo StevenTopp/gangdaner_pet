@@ -40,16 +40,19 @@ function startRunningMovement() {
   stopRunningMovement();
   if (!mainWindow || currentState !== "running") return;
 
+  const initialSize = settings.sizePx || 420;
   currentLapTraveled = 0;
-  currentLapMaxDistance = Math.floor(250 + Math.random() * 300);
+  currentLapMaxDistance = Math.floor((250 + Math.random() * 300) * (initialSize / 420.0));
   mainWindow.webContents.send("gangdaner-pet:run-direction", runDirection);
 
-  const moveSpeed = 4;
   runMovementTimer = setInterval(() => {
     if (!mainWindow || mainWindow.isDestroyed() || currentState !== "running") {
       stopRunningMovement();
       return;
     }
+
+    const currentSize = settings.sizePx || 420;
+    const moveSpeed = Math.max(1.0, 4.0 * (currentSize / 420.0));
 
     const bounds = mainWindow.getBounds();
     const primaryDisplay = screen.getPrimaryDisplay();
@@ -78,7 +81,7 @@ function startRunningMovement() {
     if (shouldReverse) {
       runDirection = -runDirection;
       currentLapTraveled = 0;
-      currentLapMaxDistance = Math.floor(250 + Math.random() * 300);
+      currentLapMaxDistance = Math.floor((250 + Math.random() * 300) * (currentSize / 420.0));
       mainWindow.webContents.send("gangdaner-pet:run-direction", runDirection);
     }
   }, 30);
