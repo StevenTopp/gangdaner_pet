@@ -73,8 +73,11 @@ function startRunningMovement() {
     const minX = workArea.x;
     const maxX = workArea.x + workArea.width - bounds.width;
 
-    const leftLimit = Math.max(minX, runPivotX - halfSpan);
-    const rightLimit = Math.min(maxX, runPivotX + halfSpan);
+    const availableLeft = runPivotX - minX;
+    const availableRight = maxX - runPivotX;
+    const span = Math.max(0, Math.min(halfSpan, availableLeft, availableRight));
+    const leftLimit = runPivotX - span;
+    const rightLimit = runPivotX + span;
 
     currentRealX += runDirection * moveSpeed;
     let shouldReverse = false;
@@ -227,13 +230,11 @@ function registerIpc() {
   ipcMain.handle("gangdaner-pet:trigger-patting",()=>triggerPatting());
   ipcMain.handle("gangdaner-pet:try-wake-up",()=>wakeUpFromIdle());
   ipcMain.handle("gangdaner-pet:send-event",(_e,k)=>sendState(k)); ipcMain.handle("gangdaner-pet:replace-asset",(_e,k)=>replaceAsset(k)); ipcMain.handle("gangdaner-pet:open-assets",()=>shell.openPath(assetsFolder())); ipcMain.handle("gangdaner-pet:menu",showContextMenu);
-  let isDraggingWindow = false;
-
-ipcMain.on("gangdaner-pet:state",(_e,k)=>{currentState=k;});
-ipcMain.on("gangdaner-pet:drag-start",()=>{isDraggingWindow=true;const c=screen.getCursorScreenPoint(),b=mainWindow.getBounds();dragOffset={x:c.x-b.x,y:c.y-b.y};});
-ipcMain.on("gangdaner-pet:drag-move",()=>{if(!dragOffset)return;const c=screen.getCursorScreenPoint();const side=Math.max(settings.sizePx,300);mainWindow.setBounds({x:c.x-dragOffset.x,y:c.y-dragOffset.y,width:side,height:side},false);});
-ipcMain.on("gangdaner-pet:drag-end",()=>{dragOffset=null;isDraggingWindow=false;if(mainWindow){currentRealX=mainWindow.getBounds().x;}const b=mainWindow?.getBounds()||{};settings.x=b.x;settings.y=b.y;saveSettings();});
-ipcMain.on("gangdaner-pet:set-ignore-mouse",(_e,v)=>mainWindow?.setIgnoreMouseEvents(Boolean(v),{forward:true}));
+  ipcMain.on("gangdaner-pet:state",(_e,k)=>{currentState=k;});
+  ipcMain.on("gangdaner-pet:drag-start",()=>{isDraggingWindow=true;const c=screen.getCursorScreenPoint(),b=mainWindow.getBounds();dragOffset={x:c.x-b.x,y:c.y-b.y};});
+  ipcMain.on("gangdaner-pet:drag-move",()=>{if(!dragOffset)return;const c=screen.getCursorScreenPoint();const side=Math.max(settings.sizePx,300);mainWindow.setBounds({x:c.x-dragOffset.x,y:c.y-dragOffset.y,width:side,height:side},false);});
+  ipcMain.on("gangdaner-pet:drag-end",()=>{dragOffset=null;isDraggingWindow=false;if(mainWindow){const nx=mainWindow.getBounds().x;currentRealX=nx;runPivotX=nx;}const b=mainWindow?.getBounds()||{};settings.x=b.x;settings.y=b.y;saveSettings();});
+  ipcMain.on("gangdaner-pet:set-ignore-mouse",(_e,v)=>mainWindow?.setIgnoreMouseEvents(Boolean(v),{forward:true}));
 }
 function createEventServer(){eventServer=http.createServer((req,res)=>{const u=new URL(req.url,`http://127.0.0.1:${EVENT_PORT}`);res.setHeader("content-type","application/json;charset=utf-8");if(u.pathname==="/health")return res.end(JSON.stringify({ok:true,app:"gangdaner-pet",states:stateEntries().map(([k])=>k),state:currentState,settings:publicSettings(),bounds:mainWindow?.getBounds()}));if(u.pathname==="/event")return res.end(JSON.stringify({ok:sendState(u.searchParams.get("name"))}));res.statusCode=404;res.end(JSON.stringify({ok:false}));});eventServer.listen(EVENT_PORT,"127.0.0.1");}
 app.whenReady().then(()=>{settings=normalizeSettings(loadJson(userPath(SETTINGS_FILE),{}));manifest=loadManifest();currentState=manifest.defaultState||"blinking";conversation=settings.memoryEnabled?loadJson(userPath(MEMORY_FILE),[]):[];registerIpc();createWindow();createMenu();createEventServer();restartTimers();});
