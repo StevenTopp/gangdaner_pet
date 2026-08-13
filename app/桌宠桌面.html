@@ -248,9 +248,12 @@
     }
 
     window.addEventListener("pointerdown", (event) => {
+      if (window.gangdanerPet) window.gangdanerPet.tryWakeUp();
+
       if (quickChatBox.classList.contains("show") && !quickChatBox.contains(event.target)) {
         closeQuickChat();
       }
+
 
       if (event.button !== 0 || !window.gangdanerPet) return;
       if (quickChatBox.contains(event.target)) return;

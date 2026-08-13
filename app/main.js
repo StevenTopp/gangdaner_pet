@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, ipcMain, screen, shell, dialog, safeStorage } = require("electron");
+const { app, BrowserWindow, Menu, ipcMain, screen, shell, dialog, safeStorage, powerMonitor } = require("electron");
 const fs = require("fs");
 const http = require("http");
 const path = require("path");
@@ -20,13 +20,17 @@ const DEFAULT_SETTINGS = {
   memoryEnabled: true, memoryTurns: 20,
   chatterEnabled: true, chatterMinMinutes: 12, chatterMaxMinutes: 18, bubbleSeconds: 8,
   waterEnabled: true, waterMinutes: 60,
-  breakEnabled: true, breakMinutes: 90
+  breakEnabled: true, breakMinutes: 90,
+  actionCycleEnabled: false, actionCycleMinutes: 5,
+  idleSleepEnabled: true, idleSleepMinutes: 10
 };
 const WATER_LINES = ["姑姑，姑父让我提醒你，你该喝水啦！", "姑姑喝口水吧，钢蛋儿会监督你的喵。", "姑父说工作再忙也要喝水。", "喝水时间到！钢蛋儿不许姑姑假装没看见。", "姑姑先喝几口水，再继续工作吧。"];
 const BREAK_LINES = ["姑姑，姑父让我提醒你起来活动一下！", "坐太久啦，站起来伸伸腰吧。", "姑姑陪钢蛋儿走两步，好不好？", "休息一分钟不会耽误工作的喵。", "肩膀和脖子也需要放松一下。"];
 let mainWindow, settingsWindow, chatWindow, eventServer, dragOffset;
 let settings = { ...DEFAULT_SETTINGS }, manifest, currentState = "blinking", conversation = [];
-let chatterTimer, waterTimer, breakTimer;
+let chatterTimer, waterTimer, breakTimer, actionCycleTimer, idleCheckTimer;
+let isIdleSleeping = false;
+let preIdleState = null;
 
 function projectRoot() { return path.resolve(__dirname, ".."); }
 function bundledAssetsFolder() { return path.join(projectRoot(), "app", ASSET_FOLDER); }
@@ -44,19 +48,82 @@ function normalizeSettings(v = {}) { return { ...DEFAULT_SETTINGS, ...v,
   apiBase: DEFAULT_SETTINGS.apiBase, model: DEFAULT_SETTINGS.model,
   sizePx: Math.round(clamp(v.sizePx, 88, 760, 420)), memoryTurns: Math.round(clamp(v.memoryTurns, 1, 50, 20)),
   chatterMinMinutes: clamp(v.chatterMinMinutes, 1, 240, 12), chatterMaxMinutes: clamp(v.chatterMaxMinutes, 1, 240, 18), bubbleSeconds: clamp(v.bubbleSeconds, 3, 30, 8),
-  waterMinutes: clamp(v.waterMinutes, 5, 480, 60), breakMinutes: clamp(v.breakMinutes, 5, 480, 90) }; }
+  waterMinutes: clamp(v.waterMinutes, 5, 480, 60), breakMinutes: clamp(v.breakMinutes, 5, 480, 90),
+  actionCycleEnabled: Boolean(v.actionCycleEnabled ?? false),
+  actionCycleMinutes: clamp(v.actionCycleMinutes, 1, 60, 5),
+  idleSleepEnabled: Boolean(v.idleSleepEnabled ?? true),
+  idleSleepMinutes: clamp(v.idleSleepMinutes, 1, 120, 10) }; }
 function loadJson(file, fallback) { try { return JSON.parse(fs.readFileSync(file, "utf8")); } catch (_) { return fallback; } }
 function saveJson(file, value) { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, JSON.stringify(value, null, 2), "utf8"); }
 function loadManifest() { const data = loadJson(path.join(assetsFolder(), "状态映射.json"), { states: {} }); for (const state of Object.values(data.states)) { state.sourceFile = state.file; state.file = pathToFileURL(path.join(assetsFolder(), state.sourceFile)).href; } return data; }
 function stateEntries() { return Object.entries(manifest.states || {}); }
 function resolveState(v) { if (manifest.states[v]) return v; return stateEntries().find(([, s]) => (s.eventAliases || []).includes(v))?.[0] || null; }
-function sendState(v) { const key = resolveState(v); if (!key || !mainWindow) return false; currentState = key; mainWindow.webContents.send("gangdaner-pet:event", key); chatWindow?.webContents.send("gangdaner-pet:state", { key, label: manifest.states[key].label }); return true; }
+function sendState(v, isManual = true) {
+  const key = resolveState(v);
+  if (!key || !mainWindow) return false;
+  if (isManual) {
+    if (key === "sleeping") {
+      isIdleSleeping = false;
+    }
+  }
+  currentState = key;
+  mainWindow.webContents.send("gangdaner-pet:event", key);
+  chatWindow?.webContents.send("gangdaner-pet:state", { key, label: manifest.states[key].label });
+  scheduleActionCycle();
+  return true;
+}
 function randomItem(items) { return items[Math.floor(Math.random() * items.length)]; }
 function showBubble(text, kind = "chatter") { if (!mainWindow || !text) return; mainWindow.webContents.send("gangdaner-pet:bubble", { text, kind, seconds: settings.bubbleSeconds }); }
-function stopTimers() { [chatterTimer, waterTimer, breakTimer].forEach(clearTimeout); }
+function stopTimers() { [chatterTimer, waterTimer, breakTimer, actionCycleTimer].forEach(clearTimeout); clearInterval(idleCheckTimer); }
 function scheduleChatter() { clearTimeout(chatterTimer); if (!settings.chatterEnabled) return; const min = Math.min(settings.chatterMinMinutes, settings.chatterMaxMinutes), max = Math.max(settings.chatterMinMinutes, settings.chatterMaxMinutes); chatterTimer = setTimeout(() => { const lines = manifest.chatter?.[currentState] || manifest.chatter?.blinking || []; if (lines.length && !(chatWindow && chatWindow.isVisible())) showBubble(randomItem(lines)); scheduleChatter(); }, (min + Math.random() * (max - min)) * 60000); }
 function scheduleReminder(kind) { const enabled = settings[`${kind}Enabled`], minutes = settings[`${kind}Minutes`], lines = kind === "water" ? WATER_LINES : BREAK_LINES; const key = kind === "water" ? "waterTimer" : "breakTimer"; if (kind === "water") clearTimeout(waterTimer); else clearTimeout(breakTimer); if (!enabled) return; const timer = setTimeout(() => { showBubble(randomItem(lines), kind); scheduleReminder(kind); }, minutes * 60000); if (kind === "water") waterTimer = timer; else breakTimer = timer; }
-function restartTimers() { stopTimers(); scheduleChatter(); scheduleReminder("water"); scheduleReminder("break"); }
+function scheduleActionCycle() {
+  clearTimeout(actionCycleTimer);
+  if (!settings.actionCycleEnabled || currentState === "sleeping" || isIdleSleeping) return;
+  const intervalMs = settings.actionCycleMinutes * 60000;
+  actionCycleTimer = setTimeout(() => {
+    const activeStates = Object.keys(manifest.states || {}).filter(k => k !== "sleeping");
+    if (!activeStates.length) return;
+    const currentIndex = activeStates.indexOf(currentState);
+    const nextState = activeStates[(currentIndex + 1) % activeStates.length];
+    sendState(nextState, false);
+  }, intervalMs);
+}
+
+function scheduleIdleCheck() {
+  clearInterval(idleCheckTimer);
+  if (!settings.idleSleepEnabled) {
+    if (isIdleSleeping) isIdleSleeping = false;
+    return;
+  }
+  idleCheckTimer = setInterval(() => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    const idleSeconds = powerMonitor.getSystemIdleTime();
+    const thresholdSeconds = settings.idleSleepMinutes * 60;
+
+    if (!isIdleSleeping && idleSeconds >= thresholdSeconds && currentState !== "sleeping") {
+      isIdleSleeping = true;
+      preIdleState = currentState;
+      sendState("sleeping", false);
+      showBubble("钢蛋儿要睡着了", "reminder");
+    } else if (isIdleSleeping && idleSeconds < 3) {
+      wakeUpFromIdle();
+    }
+  }, 3000);
+}
+
+function wakeUpFromIdle() {
+  if (!isIdleSleeping) return false;
+  isIdleSleeping = false;
+  const restoreState = preIdleState || manifest.defaultState || "blinking";
+  preIdleState = null;
+  sendState(restoreState, false);
+  showBubble("钢蛋儿醒了~", "reminder");
+  return true;
+}
+
+function restartTimers() { stopTimers(); scheduleChatter(); scheduleReminder("water"); scheduleReminder("break"); scheduleActionCycle(); scheduleIdleCheck(); }
+
 function defaultPosition(size) { const a = screen.getPrimaryDisplay().workArea; return { x: a.x + a.width - size - 24, y: a.y + a.height - size - 24 }; }
 function saveSettings() { saveJson(userPath(SETTINGS_FILE), settings); }
 function applySettings(patch = {}) { settings = normalizeSettings({ ...settings, ...patch }); saveSettings(); if (mainWindow) { const b = mainWindow.getBounds(); const side = Math.max(settings.sizePx, 300); mainWindow.setBounds({ x: b.x, y: b.y, width: side, height: side }, false); mainWindow.setAlwaysOnTop(true, "screen-saver"); mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: !settings.hideOnFullScreen }); } const pub = publicSettings(); mainWindow?.webContents.send("gangdaner-pet:settings", pub); settingsWindow?.webContents.send("gangdaner-pet:settings", pub); restartTimers(); return pub; }
@@ -78,6 +145,7 @@ function registerIpc() {
   ipcMain.handle("gangdaner-pet:get-manifest",()=>manifest); ipcMain.handle("gangdaner-pet:get-settings",()=>publicSettings()); ipcMain.handle("gangdaner-pet:update-settings",(_e,p)=>{ if(p?.apiKey){writeApiKey(p.apiKey);delete p.apiKey;} return applySettings(p); });
   ipcMain.handle("gangdaner-pet:get-conversation",()=>conversation); ipcMain.handle("gangdaner-pet:send-chat",(_e,t)=>sendChat(t)); ipcMain.handle("gangdaner-pet:clear-memory",()=>{conversation=[];saveJson(userPath(MEMORY_FILE),[]);return true;}); ipcMain.handle("gangdaner-pet:open-chat",createChatWindow);
   ipcMain.handle("gangdaner-pet:trigger-patting",()=>triggerPatting());
+  ipcMain.handle("gangdaner-pet:try-wake-up",()=>wakeUpFromIdle());
   ipcMain.handle("gangdaner-pet:send-event",(_e,k)=>sendState(k)); ipcMain.handle("gangdaner-pet:replace-asset",(_e,k)=>replaceAsset(k)); ipcMain.handle("gangdaner-pet:open-assets",()=>shell.openPath(assetsFolder())); ipcMain.handle("gangdaner-pet:menu",showContextMenu);
   ipcMain.on("gangdaner-pet:state",(_e,k)=>{currentState=k;}); ipcMain.on("gangdaner-pet:drag-start",()=>{const c=screen.getCursorScreenPoint(),b=mainWindow.getBounds();dragOffset={x:c.x-b.x,y:c.y-b.y};}); ipcMain.on("gangdaner-pet:drag-move",()=>{if(!dragOffset)return;const c=screen.getCursorScreenPoint();const side=Math.max(settings.sizePx,300);mainWindow.setBounds({x:c.x-dragOffset.x,y:c.y-dragOffset.y,width:side,height:side},false);}); ipcMain.on("gangdaner-pet:drag-end",()=>{dragOffset=null;const b=mainWindow.getBounds();settings.x=b.x;settings.y=b.y;saveSettings();}); ipcMain.on("gangdaner-pet:set-ignore-mouse",(_e,v)=>mainWindow?.setIgnoreMouseEvents(Boolean(v),{forward:true}));
 }
