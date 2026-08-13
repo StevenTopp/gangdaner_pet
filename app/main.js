@@ -40,9 +40,10 @@ function startRunningMovement() {
   stopRunningMovement();
   if (!mainWindow || currentState !== "running") return;
 
+  const FIXED_LAP_DISTANCE = 350;
   const initialSize = settings.sizePx || 420;
   currentLapTraveled = 0;
-  currentLapMaxDistance = Math.floor((250 + Math.random() * 300) * (initialSize / 420.0));
+  currentLapMaxDistance = Math.floor(FIXED_LAP_DISTANCE * (initialSize / 420.0));
   mainWindow.webContents.send("gangdaner-pet:run-direction", runDirection);
 
   runMovementTimer = setInterval(() => {
@@ -52,7 +53,7 @@ function startRunningMovement() {
     }
 
     const currentSize = settings.sizePx || 420;
-    const moveSpeed = Math.max(1.0, 4.0 * (currentSize / 420.0));
+    const moveSpeed = Math.max(0.7, 2.8 * (currentSize / 420.0));
 
     const bounds = mainWindow.getBounds();
     const primaryDisplay = screen.getPrimaryDisplay();
@@ -81,7 +82,7 @@ function startRunningMovement() {
     if (shouldReverse) {
       runDirection = -runDirection;
       currentLapTraveled = 0;
-      currentLapMaxDistance = Math.floor((250 + Math.random() * 300) * (currentSize / 420.0));
+      currentLapMaxDistance = Math.floor(FIXED_LAP_DISTANCE * (currentSize / 420.0));
       mainWindow.webContents.send("gangdaner-pet:run-direction", runDirection);
     }
   }, 30);
