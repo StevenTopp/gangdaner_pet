@@ -24,13 +24,17 @@
     body.dragging { cursor: grabbing; }
     .gangdaner-pet-video {
       position: absolute;
-      inset: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      top: 26%;
       width: 100% !important;
-      height: 100% !important;
+      height: 74% !important;
       max-width: 100% !important;
-      max-height: 100% !important;
+      max-height: 74% !important;
       display: block;
       object-fit: contain;
+      object-position: bottom center;
       background: transparent;
       pointer-events: none;
       transform: none !important;
@@ -48,28 +52,49 @@
     .pat-bounce {
       animation: petPatBounce 0.35s cubic-bezier(0.25, 1.4, 0.5, 1);
     }
-    #bubble { position:fixed; left:5%; right:5%; top:2%; z-index:5; padding:10px 13px; border-radius:16px; background:rgba(255,255,255,.96); color:#28344d; font:600 13px/1.45 "Microsoft YaHei UI",sans-serif; box-shadow:0 8px 26px rgba(31,45,76,.18); opacity:0; transform:translateY(-8px); transition:.2s; pointer-events:none; text-align:center; }
-    #bubble.show { opacity:1; transform:none; pointer-events:auto; cursor:pointer; }
-    #bubble.reminder { background:rgba(255,248,222,.98); color:#795319; }
+    #bubble {
+      position: fixed;
+      left: 4%;
+      right: 4%;
+      bottom: 75%;
+      z-index: 5;
+      padding: 9px 12px;
+      border-radius: 15px;
+      background: rgba(255, 255, 255, 0.96);
+      color: #28344d;
+      font: 600 13px/1.4 "Microsoft YaHei UI", sans-serif;
+      box-shadow: 0 8px 26px rgba(31, 45, 76, 0.18);
+      opacity: 0;
+      transform: translateY(6px);
+      transform-origin: bottom center;
+      transition: opacity 0.2s, transform 0.2s;
+      pointer-events: none;
+      text-align: center;
+      word-break: break-word;
+      white-space: normal;
+    }
+    #bubble.show { opacity: 1; transform: none; pointer-events: auto; cursor: pointer; }
+    #bubble.reminder { background: rgba(255, 248, 222, 0.98); color: #795319; }
 
     #quickChatBox {
       position: fixed;
-      left: 5%;
-      right: 5%;
-      top: 2%;
+      left: 4%;
+      right: 4%;
+      bottom: 75%;
       z-index: 10;
       display: flex;
       align-items: center;
       gap: 6px;
       padding: 5px 8px 5px 12px;
-      border-radius: 20px;
+      border-radius: 18px;
       background: rgba(255, 255, 255, 0.92);
       backdrop-filter: blur(16px);
       -webkit-backdrop-filter: blur(16px);
       border: 1px solid rgba(255, 255, 255, 0.7);
       box-shadow: 0 10px 28px rgba(31, 45, 76, 0.22);
       opacity: 0;
-      transform: translateY(-10px) scale(0.96);
+      transform: translateY(6px) scale(0.96);
+      transform-origin: bottom center;
       transition: opacity 0.2s ease, transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
       pointer-events: none;
     }
@@ -146,10 +171,12 @@
       const text = quickChatInput.value.trim();
       if (!text) return;
       closeQuickChat();
-      window.gangdanerPet.onBubble({ text: "钢蛋儿听到了，正在思考喵...", kind: "chat", seconds: 4 });
       const res = await window.gangdanerPet.sendChat(text);
       if (!res.ok) {
-        window.gangdanerPet.onBubble({ text: res.error || "暂时没连上模型喵", kind: "reminder", seconds: 6 });
+        bubble.textContent = res.error || "暂时没连上模型喵";
+        bubble.className = "show reminder";
+        clearTimeout(bubbleTimer);
+        bubbleTimer = setTimeout(() => bubble.className = "", 6000);
       }
     }
 
@@ -161,6 +188,19 @@
       } else if (e.key === "Escape") {
         closeQuickChat();
       }
+    });
+
+    // Automatically close quick chat when input loses focus or window blurs
+    quickChatInput.addEventListener("blur", () => {
+      setTimeout(() => {
+        if (document.activeElement !== quickChatSend && document.activeElement !== quickChatInput) {
+          closeQuickChat();
+        }
+      }, 150);
+    });
+
+    window.addEventListener("blur", () => {
+      closeQuickChat();
     });
 
     // Multi-click detection (Double-click = Patting, Triple-click = Header Chat Box)
@@ -181,6 +221,10 @@
     }
 
     window.addEventListener("pointerdown", (event) => {
+      if (quickChatBox.classList.contains("show") && !quickChatBox.contains(event.target)) {
+        closeQuickChat();
+      }
+
       if (event.button !== 0 || !window.gangdanerPet) return;
       if (quickChatBox.contains(event.target)) return;
 
