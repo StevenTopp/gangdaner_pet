@@ -158,13 +158,8 @@
     window.gangdanerPet.onRunDirection?.((dir) => {
       const v = petRoot.querySelector(".gangdaner-pet-video");
       if (!v) return;
-      if (dir === -1) {
-        v.style.transformOrigin = "48.06% 50%";
-        v.style.transform = "scaleX(-1)";
-      } else {
-        v.style.transformOrigin = "50% 50%";
-        v.style.transform = "scaleX(1)";
-      }
+      v.style.transformOrigin = "50% 50%";
+      v.style.transform = dir === -1 ? "scaleX(-1)" : "scaleX(1)";
     });
     const bubble=document.getElementById("bubble"); let bubbleTimer;
     window.gangdanerPet.onBubble(({text,kind,seconds})=>{bubble.textContent=text;bubble.className=`show ${kind==='chatter'||kind==='chat'?'':'reminder'}`;clearTimeout(bubbleTimer);bubbleTimer=setTimeout(()=>bubble.className="",Number(seconds||8)*1000);});

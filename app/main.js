@@ -3,6 +3,13 @@ const fs = require("fs");
 const http = require("http");
 const path = require("path");
 const { pathToFileURL } = require("url");
+const {
+  advanceRunPosition,
+  chooseRunDirection,
+  createRunTrack,
+  runSpeedPxPerSecond,
+  scaledRunDistance
+} = require("./run-movement");
 
 app.disableHardwareAcceleration();
 app.commandLine.appendSwitch("no-sandbox");
@@ -34,21 +41,34 @@ let preIdleState = null;
 let isDraggingWindow = false;
 let runMovementTimer = null;
 let runDirection = 1;
-let currentLapTraveled = 0;
-let currentLapMaxDistance = 350;
 let currentRealX = 0;
+let runTrackMinX = 0;
+let runTrackMaxX = 0;
+let lastRunTickAt = 0;
 
-let runPivotX = 0;
+function resetRunningTrack(bounds, chooseDirection = false) {
+  const workArea = screen.getDisplayMatching(bounds).workArea;
+  const minX = workArea.x;
+  const maxX = Math.max(minX, workArea.x + workArea.width - bounds.width);
+  currentRealX = Math.min(maxX, Math.max(minX, bounds.x));
+  if (chooseDirection) runDirection = chooseRunDirection(currentRealX, minX, maxX);
+  const track = createRunTrack(
+    currentRealX,
+    runDirection,
+    minX,
+    maxX,
+    scaledRunDistance(settings.sizePx || 420)
+  );
+  runTrackMinX = track.minX;
+  runTrackMaxX = track.maxX;
+  lastRunTickAt = performance.now();
+}
 
 function startRunningMovement() {
   stopRunningMovement();
   if (!mainWindow || currentState !== "running") return;
 
-  const FIXED_LAP_DISTANCE = 350;
-  const initialSize = settings.sizePx || 420;
-  runPivotX = mainWindow.getBounds().x;
-  currentRealX = runPivotX;
-
+  resetRunningTrack(mainWindow.getBounds(), true);
   mainWindow.webContents.send("gangdaner-pet:run-direction", runDirection);
 
   runMovementTimer = setInterval(() => {
@@ -59,44 +79,28 @@ function startRunningMovement() {
 
     const bounds = mainWindow.getBounds();
     if (isDraggingWindow) {
-      runPivotX = currentRealX = bounds.x;
+      lastRunTickAt = performance.now();
       return;
     }
 
-    const currentSize = settings.sizePx || 420;
-    const moveSpeed = Math.max(0.7, 2.8 * (currentSize / 420.0));
-    const halfSpan = Math.floor(FIXED_LAP_DISTANCE * (currentSize / 420.0));
-
-    const primaryDisplay = screen.getPrimaryDisplay();
-    const workArea = primaryDisplay.workArea;
-
-    const minX = workArea.x;
-    const maxX = workArea.x + workArea.width - bounds.width;
-
-    const availableLeft = runPivotX - minX;
-    const availableRight = maxX - runPivotX;
-    const span = Math.max(0, Math.min(halfSpan, availableLeft, availableRight));
-    const leftLimit = runPivotX - span;
-    const rightLimit = runPivotX + span;
-
-    currentRealX += runDirection * moveSpeed;
-    let shouldReverse = false;
-
-    if (runDirection === 1 && currentRealX >= rightLimit) {
-      currentRealX = rightLimit;
-      shouldReverse = true;
-    } else if (runDirection === -1 && currentRealX <= leftLimit) {
-      currentRealX = leftLimit;
-      shouldReverse = true;
-    }
-
-    mainWindow.setPosition(Math.round(currentRealX), bounds.y);
-
-    if (shouldReverse) {
-      runDirection = -runDirection;
+    const now = performance.now();
+    const elapsedSeconds = Math.min(0.1, Math.max(0, now - lastRunTickAt) / 1000);
+    lastRunTickAt = now;
+    const movement = advanceRunPosition(
+      currentRealX,
+      runDirection,
+      runSpeedPxPerSecond(settings.sizePx || 420) * elapsedSeconds,
+      runTrackMinX,
+      runTrackMaxX
+    );
+    currentRealX = movement.x;
+    if (movement.direction !== runDirection) {
+      runDirection = movement.direction;
       mainWindow.webContents.send("gangdaner-pet:run-direction", runDirection);
     }
-  }, 30);
+    const nextX = Math.round(currentRealX);
+    if (nextX !== bounds.x) mainWindow.setPosition(nextX, bounds.y, false);
+  }, 16);
 }
 
 function stopRunningMovement() {
@@ -205,7 +209,7 @@ function wakeUpFromIdle() {
   return true;
 }
 
-function restartTimers() { stopTimers(); scheduleChatter(); scheduleReminder("water"); scheduleReminder("break"); scheduleActionCycle(); scheduleIdleCheck(); }
+function restartTimers() { stopTimers(); scheduleChatter(); scheduleReminder("water"); scheduleReminder("break"); scheduleActionCycle(); scheduleIdleCheck(); if (currentState === "running") startRunningMovement(); }
 
 function defaultPosition(size) { const a = screen.getPrimaryDisplay().workArea; return { x: a.x + a.width - size - 24, y: a.y + a.height - size - 24 }; }
 function saveSettings() { saveJson(userPath(SETTINGS_FILE), settings); }
@@ -233,7 +237,7 @@ function registerIpc() {
   ipcMain.on("gangdaner-pet:state",(_e,k)=>{currentState=k;});
   ipcMain.on("gangdaner-pet:drag-start",()=>{isDraggingWindow=true;const c=screen.getCursorScreenPoint(),b=mainWindow.getBounds();dragOffset={x:c.x-b.x,y:c.y-b.y};});
   ipcMain.on("gangdaner-pet:drag-move",()=>{if(!dragOffset)return;const c=screen.getCursorScreenPoint();const side=Math.max(settings.sizePx,300);mainWindow.setBounds({x:c.x-dragOffset.x,y:c.y-dragOffset.y,width:side,height:side},false);});
-  ipcMain.on("gangdaner-pet:drag-end",()=>{dragOffset=null;isDraggingWindow=false;if(mainWindow){const nx=mainWindow.getBounds().x;currentRealX=nx;runPivotX=nx;}const b=mainWindow?.getBounds()||{};settings.x=b.x;settings.y=b.y;saveSettings();});
+  ipcMain.on("gangdaner-pet:drag-end",()=>{dragOffset=null;isDraggingWindow=false;const b=mainWindow?.getBounds()||{};if(mainWindow&&currentState==="running"){resetRunningTrack(b,true);mainWindow.webContents.send("gangdaner-pet:run-direction",runDirection);}settings.x=b.x;settings.y=b.y;saveSettings();});
   ipcMain.on("gangdaner-pet:set-ignore-mouse",(_e,v)=>mainWindow?.setIgnoreMouseEvents(Boolean(v),{forward:true}));
 }
 function createEventServer(){eventServer=http.createServer((req,res)=>{const u=new URL(req.url,`http://127.0.0.1:${EVENT_PORT}`);res.setHeader("content-type","application/json;charset=utf-8");if(u.pathname==="/health")return res.end(JSON.stringify({ok:true,app:"gangdaner-pet",states:stateEntries().map(([k])=>k),state:currentState,settings:publicSettings(),bounds:mainWindow?.getBounds()}));if(u.pathname==="/event")return res.end(JSON.stringify({ok:sendState(u.searchParams.get("name"))}));res.statusCode=404;res.end(JSON.stringify({ok:false}));});eventServer.listen(EVENT_PORT,"127.0.0.1");}
