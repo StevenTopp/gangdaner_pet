@@ -272,12 +272,88 @@
       if (dragging) window.gangdanerPet.moveDrag();
     });
 
+    // 16-Direction Mouse Look Logic
+    const LOOK_IMAGES = [];
+    const LOOK_ALLOWED_STATES = ["blinking", "look_mouse"];
+    const DEAD_ZONE = 80;
+    const SMOOTH = 0.14;
+    let smoothX = 0, smoothY = 0;
+    let currentLookDirection = null;
+    let pendingDirection = null;
+    let pendingSince = 0;
+
+    const centerImg = new Image();
+    centerImg.src = "./08_可替换素材/跟随鼠标/center.webp";
+    LOOK_IMAGES.push(centerImg);
+
+    for (let i = 0; i < 16; i++) {
+      const img = new Image();
+      img.src = `./08_可替换素材/跟随鼠标/look_${String(i).padStart(2, "0")}.webp`;
+      LOOK_IMAGES.push(img);
+    }
+
+    function getDirectionIndex(dx, dy) {
+      const distance = Math.hypot(dx, dy);
+      if (distance < DEAD_ZONE) return 0;
+
+      let angle = Math.atan2(dy, dx);
+      if (angle < 0) angle += Math.PI * 2;
+      const count = 16;
+      return (Math.round((angle / (Math.PI * 2)) * count) % count) + 1;
+    }
+
+    function applyDirectionFrame(dirIdx) {
+      if (dirIdx === currentLookDirection) return;
+      currentLookDirection = dirIdx;
+
+      const currentState = pet?.getState?.();
+      if (LOOK_ALLOWED_STATES.includes(currentState) && !quickChatBox.classList.contains("show") && !petRoot.classList.contains("pat-bounce")) {
+        const media = pet?.media;
+        if (media && media.tagName === "IMG") {
+          media.src = LOOK_IMAGES[dirIdx]?.src || LOOK_IMAGES[0].src;
+        } else if (media && media.tagName === "VIDEO") {
+          pet.setState("look_mouse");
+          if (pet.media && pet.media.tagName === "IMG") {
+            pet.media.src = LOOK_IMAGES[dirIdx]?.src || LOOK_IMAGES[0].src;
+          }
+        }
+      }
+    }
+
+    function requestDirection(targetDir) {
+      if (targetDir === currentLookDirection) {
+        pendingDirection = null;
+        return;
+      }
+      if (targetDir !== pendingDirection) {
+        pendingDirection = targetDir;
+        pendingSince = performance.now();
+        return;
+      }
+      if (performance.now() - pendingSince >= 60) {
+        applyDirectionFrame(targetDir);
+        pendingDirection = null;
+      }
+    }
+
+    window.gangdanerPet.onMouseLook(({ dx, dy }) => {
+      const currentState = pet?.getState?.();
+      if (!LOOK_ALLOWED_STATES.includes(currentState) || quickChatBox.classList.contains("show")) {
+        return;
+      }
+      smoothX += (dx - smoothX) * SMOOTH;
+      smoothY += (dy - smoothY) * SMOOTH;
+      const targetDir = getDirectionIndex(smoothX, smoothY);
+      requestDirection(targetDir);
+    });
+
     function endDrag(event) {
       if (pointerId !== event.pointerId) return;
       if (dragging && window.gangdanerPet) {
         window.gangdanerPet.endDrag();
       } else if (!dragging) {
         clickCount++;
+
         if (clickCount === 3) {
           clearTimeout(clickTimer);
           clickCount = 0;

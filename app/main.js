@@ -82,5 +82,21 @@ function registerIpc() {
   ipcMain.on("gangdaner-pet:state",(_e,k)=>{currentState=k;}); ipcMain.on("gangdaner-pet:drag-start",()=>{const c=screen.getCursorScreenPoint(),b=mainWindow.getBounds();dragOffset={x:c.x-b.x,y:c.y-b.y};}); ipcMain.on("gangdaner-pet:drag-move",()=>{if(!dragOffset)return;const c=screen.getCursorScreenPoint();const side=Math.max(settings.sizePx,300);mainWindow.setBounds({x:c.x-dragOffset.x,y:c.y-dragOffset.y,width:side,height:side},false);}); ipcMain.on("gangdaner-pet:drag-end",()=>{dragOffset=null;const b=mainWindow.getBounds();settings.x=b.x;settings.y=b.y;saveSettings();}); ipcMain.on("gangdaner-pet:set-ignore-mouse",(_e,v)=>mainWindow?.setIgnoreMouseEvents(Boolean(v),{forward:true}));
 }
 function createEventServer(){eventServer=http.createServer((req,res)=>{const u=new URL(req.url,`http://127.0.0.1:${EVENT_PORT}`);res.setHeader("content-type","application/json;charset=utf-8");if(u.pathname==="/health")return res.end(JSON.stringify({ok:true,app:"gangdaner-pet",states:stateEntries().map(([k])=>k),state:currentState,settings:publicSettings(),bounds:mainWindow?.getBounds()}));if(u.pathname==="/event")return res.end(JSON.stringify({ok:sendState(u.searchParams.get("name"))}));res.statusCode=404;res.end(JSON.stringify({ok:false}));});eventServer.listen(EVENT_PORT,"127.0.0.1");}
-app.whenReady().then(()=>{settings=normalizeSettings(loadJson(userPath(SETTINGS_FILE),{}));manifest=loadManifest();currentState=manifest.defaultState||"blinking";conversation=settings.memoryEnabled?loadJson(userPath(MEMORY_FILE),[]):[];registerIpc();createWindow();createMenu();createEventServer();restartTimers();});
+let lastMouseX = null, lastMouseY = null;
+function scheduleMouseLook() {
+  setInterval(() => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    const mouse = screen.getCursorScreenPoint();
+    const bounds = mainWindow.getBounds();
+    const petCenterX = Math.round(bounds.x + bounds.width / 2);
+    const petCenterY = Math.round(bounds.y + bounds.height * 0.6);
+    const dx = mouse.x - petCenterX;
+    const dy = mouse.y - petCenterY;
+    if (lastMouseX === mouse.x && lastMouseY === mouse.y) return;
+    lastMouseX = mouse.x; lastMouseY = mouse.y;
+    mainWindow.webContents.send("gangdaner-pet:mouse-look", { dx, dy, x: mouse.x, y: mouse.y });
+  }, 30);
+}
+app.whenReady().then(()=>{settings=normalizeSettings(loadJson(userPath(SETTINGS_FILE),{}));manifest=loadManifest();currentState=manifest.defaultState||"blinking";conversation=settings.memoryEnabled?loadJson(userPath(MEMORY_FILE),[]):[];registerIpc();createWindow();createMenu();createEventServer();restartTimers();scheduleMouseLook();});
+
 app.on("before-quit",()=>{app.isQuitting=true;stopTimers();eventServer?.close();}); app.on("window-all-closed",()=>app.quit());
