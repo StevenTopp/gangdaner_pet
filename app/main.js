@@ -31,6 +31,68 @@ let settings = { ...DEFAULT_SETTINGS }, manifest, currentState = "blinking", con
 let chatterTimer, waterTimer, breakTimer, actionCycleTimer, idleCheckTimer;
 let isIdleSleeping = false;
 let preIdleState = null;
+let runMovementTimer = null;
+let runDirection = 1;
+let currentLapTraveled = 0;
+let currentLapMaxDistance = 350;
+
+function startRunningMovement() {
+  stopRunningMovement();
+  if (!mainWindow || currentState !== "running") return;
+
+  currentLapTraveled = 0;
+  currentLapMaxDistance = Math.floor(250 + Math.random() * 300);
+  mainWindow.webContents.send("gangdaner-pet:run-direction", runDirection);
+
+  const moveSpeed = 4;
+  runMovementTimer = setInterval(() => {
+    if (!mainWindow || mainWindow.isDestroyed() || currentState !== "running") {
+      stopRunningMovement();
+      return;
+    }
+
+    const bounds = mainWindow.getBounds();
+    const primaryDisplay = screen.getPrimaryDisplay();
+    const workArea = primaryDisplay.workArea;
+
+    const minX = workArea.x;
+    const maxX = workArea.x + workArea.width - bounds.width;
+
+    let nextX = bounds.x + runDirection * moveSpeed;
+    currentLapTraveled += moveSpeed;
+
+    let shouldReverse = false;
+
+    if (nextX <= minX) {
+      nextX = minX;
+      shouldReverse = true;
+    } else if (nextX >= maxX) {
+      nextX = maxX;
+      shouldReverse = true;
+    } else if (currentLapTraveled >= currentLapMaxDistance) {
+      shouldReverse = true;
+    }
+
+    mainWindow.setPosition(Math.round(nextX), bounds.y);
+
+    if (shouldReverse) {
+      runDirection = -runDirection;
+      currentLapTraveled = 0;
+      currentLapMaxDistance = Math.floor(250 + Math.random() * 300);
+      mainWindow.webContents.send("gangdaner-pet:run-direction", runDirection);
+    }
+  }, 30);
+}
+
+function stopRunningMovement() {
+  if (runMovementTimer) {
+    clearInterval(runMovementTimer);
+    runMovementTimer = null;
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("gangdaner-pet:run-direction", 1);
+  }
+}
 
 function projectRoot() { return path.resolve(__dirname, ".."); }
 function bundledAssetsFolder() { return path.join(projectRoot(), "app", ASSET_FOLDER); }
@@ -48,7 +110,8 @@ function normalizeSettings(v = {}) { return { ...DEFAULT_SETTINGS, ...v,
   apiBase: DEFAULT_SETTINGS.apiBase, model: DEFAULT_SETTINGS.model,
   sizePx: Math.round(clamp(v.sizePx, 88, 760, 420)), memoryTurns: Math.round(clamp(v.memoryTurns, 1, 50, 20)),
   chatterMinMinutes: clamp(v.chatterMinMinutes, 1, 240, 12), chatterMaxMinutes: clamp(v.chatterMaxMinutes, 1, 240, 18), bubbleSeconds: clamp(v.bubbleSeconds, 3, 30, 8),
-  waterMinutes: clamp(v.waterMinutes, 5, 480, 60), breakMinutes: clamp(v.breakMinutes, 5, 480, 90),
+  waterEnabled: Boolean(v.waterEnabled ?? true), waterMinutes: clamp(v.waterMinutes, 5, 480, 60),
+  breakEnabled: Boolean(v.breakEnabled ?? true), breakMinutes: clamp(v.breakMinutes, 5, 480, 90),
   actionCycleEnabled: Boolean(v.actionCycleEnabled ?? false),
   actionCycleMinutes: clamp(v.actionCycleMinutes, 1, 60, 5),
   idleSleepEnabled: Boolean(v.idleSleepEnabled ?? true),
@@ -69,12 +132,17 @@ function sendState(v, isManual = true) {
   currentState = key;
   mainWindow.webContents.send("gangdaner-pet:event", key);
   chatWindow?.webContents.send("gangdaner-pet:state", { key, label: manifest.states[key].label });
+  if (key === "running") {
+    startRunningMovement();
+  } else {
+    stopRunningMovement();
+  }
   scheduleActionCycle();
   return true;
 }
 function randomItem(items) { return items[Math.floor(Math.random() * items.length)]; }
 function showBubble(text, kind = "chatter") { if (!mainWindow || !text) return; mainWindow.webContents.send("gangdaner-pet:bubble", { text, kind, seconds: settings.bubbleSeconds }); }
-function stopTimers() { [chatterTimer, waterTimer, breakTimer, actionCycleTimer].forEach(clearTimeout); clearInterval(idleCheckTimer); }
+function stopTimers() { [chatterTimer, waterTimer, breakTimer, actionCycleTimer].forEach(clearTimeout); clearInterval(idleCheckTimer); stopRunningMovement(); }
 function scheduleChatter() { clearTimeout(chatterTimer); if (!settings.chatterEnabled) return; const min = Math.min(settings.chatterMinMinutes, settings.chatterMaxMinutes), max = Math.max(settings.chatterMinMinutes, settings.chatterMaxMinutes); chatterTimer = setTimeout(() => { const lines = manifest.chatter?.[currentState] || manifest.chatter?.blinking || []; if (lines.length && !(chatWindow && chatWindow.isVisible())) showBubble(randomItem(lines)); scheduleChatter(); }, (min + Math.random() * (max - min)) * 60000); }
 function scheduleReminder(kind) { const enabled = settings[`${kind}Enabled`], minutes = settings[`${kind}Minutes`], lines = kind === "water" ? WATER_LINES : BREAK_LINES; const key = kind === "water" ? "waterTimer" : "breakTimer"; if (kind === "water") clearTimeout(waterTimer); else clearTimeout(breakTimer); if (!enabled) return; const timer = setTimeout(() => { showBubble(randomItem(lines), kind); scheduleReminder(kind); }, minutes * 60000); if (kind === "water") waterTimer = timer; else breakTimer = timer; }
 function scheduleActionCycle() {
