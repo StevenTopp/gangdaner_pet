@@ -18,7 +18,7 @@ const {
   parseChatPlan,
   selectChatPlanReply
 } = require("./action-parser");
-const { fetchChatCompletion, formatChatApiError } = require("./chat-api");
+const { applyThinkingPreference, fetchChatCompletion, formatChatApiError } = require("./chat-api");
 
 app.disableHardwareAcceleration();
 app.commandLine.appendSwitch("no-sandbox");
@@ -33,6 +33,7 @@ const DEFAULT_PERSONA = "你是布偶猫钢蛋儿，是姑姑和姑父家的小�
 const DEFAULT_SETTINGS = {
   sizePx: 420, x: null, y: null, hideOnFullScreen: false,
   apiBase: "https://apihub.agnes-ai.com/v1", model: "agnes-2.0-flash", persona: DEFAULT_PERSONA,
+  thinkingEnabled: false,
   memoryEnabled: true, memoryTurns: 20,
   rebellionEnabled: true, rebellionRate: 30,
   chatterEnabled: true, chatterMinMinutes: 12, chatterMaxMinutes: 18, bubbleSeconds: 8,
@@ -161,6 +162,7 @@ function assetsFolder() {
 function clamp(v, min, max, fallback) { v = Number(v); return Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : fallback; }
 function normalizeSettings(v = {}) { return { ...DEFAULT_SETTINGS, ...v,
   apiBase: DEFAULT_SETTINGS.apiBase, model: DEFAULT_SETTINGS.model,
+  thinkingEnabled: Boolean(v.thinkingEnabled ?? false),
   sizePx: Math.round(clamp(v.sizePx, 88, 760, 420)), memoryTurns: Math.round(clamp(v.memoryTurns, 1, 50, 20)),
   rebellionEnabled: Boolean(v.rebellionEnabled ?? true),
   rebellionRate: Math.round(clamp(v.rebellionRate, 0, 100, 30)),
@@ -285,13 +287,13 @@ async function sendChat(text) {
     const { data, attemptsUsed } = await fetchChatCompletion({
       url: `${settings.apiBase.replace(/\/$/, "")}/chat/completions`,
       apiKey: key,
-      payload: {
+      payload: applyThinkingPreference({
         model: settings.model,
         messages,
         temperature: 0.7,
         max_tokens: 700,
         response_format: { type: "json_object" }
-      }
+      }, settings.thinkingEnabled)
     });
     const rawReply = String(data.choices?.[0]?.message?.content || "").trim();
     if (!rawReply) throw new Error("接口没有返回内容");

@@ -34,6 +34,16 @@ function wait(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+function applyThinkingPreference(payload = {}, thinkingEnabled = false) {
+  const result = { ...payload };
+  if (thinkingEnabled) {
+    delete result.reasoning_effort;
+  } else {
+    result.reasoning_effort = "none";
+  }
+  return result;
+}
+
 async function fetchChatCompletion({
   url,
   apiKey,
@@ -73,6 +83,7 @@ async function fetchChatCompletion({
 }
 
 module.exports = {
+  applyThinkingPreference,
   ChatApiHttpError,
   DEFAULT_RETRY_DELAYS_MS,
   RETRYABLE_HTTP_STATUSES,

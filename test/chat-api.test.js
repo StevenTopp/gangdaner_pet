@@ -1,9 +1,17 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 const {
+  applyThinkingPreference,
   fetchChatCompletion,
   formatChatApiError
 } = require("../app/chat-api");
+
+test("thinking preference defaults to no-think and restores provider defaults when enabled", () => {
+  const payload = { model: "test", reasoning_effort: "high" };
+  assert.deepEqual(applyThinkingPreference(payload, false), { model: "test", reasoning_effort: "none" });
+  assert.deepEqual(applyThinkingPreference(payload, true), { model: "test" });
+  assert.equal(payload.reasoning_effort, "high");
+});
 
 function response(status, body) {
   return {

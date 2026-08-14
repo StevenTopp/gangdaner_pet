@@ -55,7 +55,8 @@ async function evaluateScenario(scenario) {
       messages: [{ role: "system", content: prompt }, ...context, { role: "user", content: scenario.text }],
       temperature: 0.2,
       max_tokens: 700,
-      response_format: { type: "json_object" }
+      response_format: { type: "json_object" },
+      reasoning_effort: "none"
     }),
     signal: AbortSignal.timeout(45000)
   });
