@@ -11,9 +11,11 @@ const {
   scaledRunDistance
 } = require("./run-movement");
 const {
+  CatDispositionSampler,
   buildChatSystemPrompt,
-  parseActionChange,
-  determineCatDisposition
+  buildConversationContext,
+  detectActionRequest,
+  parseActionChange
 } = require("./action-parser");
 
 app.disableHardwareAcceleration();
@@ -41,6 +43,7 @@ const WATER_LINES = ["姑姑，姑父让我提醒你，你该喝水啦！", "姑
 const BREAK_LINES = ["姑姑，姑父让我提醒你起来活动一下！", "坐太久啦，站起来伸伸腰吧。", "姑姑陪钢蛋儿走两步，好不好？", "休息一分钟不会耽误工作的喵。", "肩膀和脖子也需要放松一下。"];
 let mainWindow, settingsWindow, chatWindow, eventServer, dragOffset;
 let settings = { ...DEFAULT_SETTINGS }, manifest, currentState = "blinking", conversation = [];
+const catDispositionSampler = new CatDispositionSampler();
 let chatterTimer, waterTimer, breakTimer, actionCycleTimer, idleCheckTimer;
 let isIdleSleeping = false;
 let preIdleState = null;
@@ -261,24 +264,43 @@ async function sendChat(text) {
   if (!text) return { ok: false, error: "请输入内容" };
   const key = readApiKey();
   if (!key) return { ok: false, error: "请先在设置中填写 API 密钥" };
-  conversation.push({ role: "user", content: text });
-  const catDisposition = determineCatDisposition({
+  const stateBeforeReply = currentState;
+  const actionRequest = detectActionRequest({
     userText: text,
+    currentStateKey: stateBeforeReply,
+    states: manifest.states || {}
+  });
+  const catDisposition = catDispositionSampler.draw({
+    userText: text,
+    isActionRequest: actionRequest.isActionRequest,
     rebellionEnabled: settings.rebellionEnabled,
     rebellionRate: settings.rebellionRate
   });
+  const requiredActionState = actionRequest.isActionRequest && catDisposition !== "rebellious"
+    ? actionRequest.targetState
+    : null;
   const systemPrompt = buildChatSystemPrompt({
     persona: settings.persona,
-    currentStateKey: currentState,
+    currentStateKey: stateBeforeReply,
     states: manifest.states || {},
-    catDisposition
+    catDisposition,
+    actionRequest,
+    requiredActionState
   });
-  const messages = [{ role: "system", content: systemPrompt }].concat(conversation.slice(-settings.memoryTurns * 2));
+  const contextMessages = buildConversationContext(conversation, {
+    limit: settings.memoryTurns * 2,
+    states: manifest.states || {}
+  });
+  const messages = [
+    { role: "system", content: systemPrompt },
+    ...contextMessages,
+    { role: "user", content: text }
+  ];
   try {
     const response = await fetch(`${settings.apiBase.replace(/\/$/, "")}/chat/completions`, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
-      body: JSON.stringify({ model: settings.model, messages, temperature: 0.8, max_tokens: 500 })
+      body: JSON.stringify({ model: settings.model, messages, temperature: 0.9, max_tokens: 500 })
     });
     const raw = await response.text();
     if (!response.ok) throw new Error(`HTTP ${response.status}: ${raw.slice(0, 200)}`);
@@ -286,20 +308,41 @@ async function sendChat(text) {
     const rawReply = String(data.choices?.[0]?.message?.content || "").trim();
     if (!rawReply) throw new Error("接口没有返回内容");
 
-    const { cleanReply, targetState } = parseActionChange(rawReply, manifest.states || {});
-    if (targetState) {
-      sendState(targetState, true);
-    }
+    const parsed = parseActionChange(rawReply, manifest.states || {});
+    const cleanReply = parsed.cleanReply || "喵？钢蛋儿刚才走神啦，姑姑再说一次好不好？";
 
-    conversation.push({ role: "assistant", content: cleanReply });
+    // 动作决策由应用层的本轮概率结果兜底执行，不再依赖模型是否准确
+    // 拼出 action change。模型输出的指令只用于协议校验和调试。
+    if (requiredActionState) sendState(requiredActionState, true);
+
+    conversation.push(
+      {
+        role: "user",
+        content: text,
+        actionContext: {
+          isActionRequest: actionRequest.isActionRequest,
+          currentStateKey: stateBeforeReply,
+          targetState: actionRequest.targetState,
+          disposition: catDisposition
+        }
+      },
+      { role: "assistant", content: cleanReply, actionContext: { disposition: catDisposition } }
+    );
     if (settings.memoryEnabled) saveJson(userPath(MEMORY_FILE), conversation.slice(-settings.memoryTurns * 2));
     const currentHistory = conversation.slice(-settings.memoryTurns * 2);
     mainWindow?.webContents.send("gangdaner-pet:conversation", currentHistory);
     chatWindow?.webContents.send("gangdaner-pet:conversation", currentHistory);
     showBubble(cleanReply, "chat");
-    return { ok: true, reply: cleanReply, conversation: currentHistory };
+    return {
+      ok: true,
+      reply: cleanReply,
+      conversation: currentHistory,
+      actionRequest,
+      disposition: catDisposition,
+      actionChangedTo: requiredActionState,
+      modelAction: parsed.targetState
+    };
   } catch (e) {
-    conversation.pop();
     return { ok: false, error: `暂时没连上模型：${e.message}` };
   }
 }
