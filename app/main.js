@@ -12,10 +12,11 @@ const {
 } = require("./run-movement");
 const {
   CatDispositionSampler,
-  buildChatSystemPrompt,
+  buildChatPlanningPrompt,
   buildConversationContext,
   detectActionRequest,
-  parseActionChange
+  parseChatPlan,
+  selectChatPlanReply
 } = require("./action-parser");
 const { fetchChatCompletion, formatChatApiError } = require("./chat-api");
 
@@ -266,27 +267,10 @@ async function sendChat(text) {
   const key = readApiKey();
   if (!key) return { ok: false, error: "请先在设置中填写 API 密钥" };
   const stateBeforeReply = currentState;
-  const actionRequest = detectActionRequest({
-    userText: text,
-    currentStateKey: stateBeforeReply,
-    states: manifest.states || {}
-  });
-  const catDisposition = catDispositionSampler.draw({
-    userText: text,
-    isActionRequest: actionRequest.isActionRequest,
-    rebellionEnabled: settings.rebellionEnabled,
-    rebellionRate: settings.rebellionRate
-  });
-  const requiredActionState = actionRequest.isActionRequest && catDisposition !== "rebellious"
-    ? actionRequest.targetState
-    : null;
-  const systemPrompt = buildChatSystemPrompt({
+  const systemPrompt = buildChatPlanningPrompt({
     persona: settings.persona,
     currentStateKey: stateBeforeReply,
-    states: manifest.states || {},
-    catDisposition,
-    actionRequest,
-    requiredActionState
+    states: manifest.states || {}
   });
   const contextMessages = buildConversationContext(conversation, {
     limit: settings.memoryTurns * 2,
@@ -301,13 +285,50 @@ async function sendChat(text) {
     const { data, attemptsUsed } = await fetchChatCompletion({
       url: `${settings.apiBase.replace(/\/$/, "")}/chat/completions`,
       apiKey: key,
-      payload: { model: settings.model, messages, temperature: 0.9, max_tokens: 500 }
+      payload: {
+        model: settings.model,
+        messages,
+        temperature: 0.7,
+        max_tokens: 700,
+        response_format: { type: "json_object" }
+      }
     });
     const rawReply = String(data.choices?.[0]?.message?.content || "").trim();
     if (!rawReply) throw new Error("接口没有返回内容");
 
-    const parsed = parseActionChange(rawReply, manifest.states || {});
-    const cleanReply = parsed.cleanReply || "喵？钢蛋儿刚才走神啦，姑姑再说一次好不好？";
+    const plan = parseChatPlan(rawReply, manifest.states || {});
+    // Model semantics are authoritative. The local detector is only an emergency
+    // fallback for a provider that ignored the enforced JSON response format.
+    const fallbackRequest = plan.valid ? null : detectActionRequest({
+      userText: text,
+      currentStateKey: stateBeforeReply,
+      states: manifest.states || {}
+    });
+    const actionRequest = plan.valid
+      ? {
+          isActionRequest: plan.isActionRequest,
+          targetState: plan.targetState,
+          reason: "model_semantic_intent",
+          source: "model"
+        }
+      : { ...fallbackRequest, source: "local_fallback" };
+    const catDisposition = catDispositionSampler.draw({
+      userText: text,
+      isActionRequest: actionRequest.isActionRequest,
+      rebellionEnabled: settings.rebellionEnabled,
+      rebellionRate: settings.rebellionRate
+    });
+    const requiredActionState = actionRequest.isActionRequest && catDisposition !== "rebellious"
+      ? actionRequest.targetState
+      : null;
+    const cleanReply = selectChatPlanReply({
+      plan,
+      disposition: catDisposition,
+      isActionRequest: actionRequest.isActionRequest,
+      currentStateKey: stateBeforeReply,
+      targetState: actionRequest.targetState,
+      states: manifest.states || {}
+    }) || "喵？钢蛋儿刚才走神啦，姑姑再说一次好不好？";
 
     // 动作决策由应用层的本轮概率结果兜底执行，不再依赖模型是否准确
     // 拼出 action change。模型输出的指令只用于协议校验和调试。
@@ -338,7 +359,8 @@ async function sendChat(text) {
       actionRequest,
       disposition: catDisposition,
       actionChangedTo: requiredActionState,
-      modelAction: parsed.targetState,
+      modelAction: plan.targetState,
+      intentSource: actionRequest.source,
       apiAttempts: attemptsUsed
     };
   } catch (e) {

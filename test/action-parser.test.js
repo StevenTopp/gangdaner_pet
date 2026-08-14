@@ -2,13 +2,16 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 const {
   CatDispositionSampler,
+  buildChatPlanningPrompt,
   buildChatSystemPrompt,
   buildConversationContext,
   checkFoodMention,
   detectActionRequest,
   determineCatDisposition,
+  parseChatPlan,
   parseActionChange,
-  resolveActionTarget
+  resolveActionTarget,
+  selectChatPlanReply
 } = require("../app/action-parser");
 
 const mockStates = {
@@ -242,4 +245,63 @@ test("prompt carries an authoritative per-turn decision and exact action key", (
   assert.ok(prompt.includes("应当真正执行的动作：睡觉"));
   assert.ok(prompt.includes("action change: sleeping"));
   assert.ok(prompt.includes("历史中的同意、拒绝和动作决定一律不得延续到本轮"));
+});
+
+test("planning prompt delegates semantic intent and requests both action replies", () => {
+  const prompt = buildChatPlanningPrompt({
+    persona: "你是布偶猫钢蛋儿",
+    currentTime: "2026/8/14 13:00:00",
+    currentStateKey: "running",
+    states: mockStates
+  });
+  assert.ok(prompt.includes("必须根据整句话的语义判断"));
+  assert.ok(prompt.includes("该睡了"));
+  assert.ok(prompt.includes("is_action_request"));
+  assert.ok(prompt.includes("obedient_reply"));
+  assert.ok(prompt.includes("rebellious_reply"));
+});
+
+test("structured model plan controls action intent and reply selection", () => {
+  const plan = parseChatPlan(`\n\n\`\`\`json
+  {
+    "is_action_request": true,
+    "target_action": "sleeping",
+    "normal_reply": "",
+    "obedient_reply": "好呀姑姑，钢蛋儿睡觉觉啦。",
+    "rebellious_reply": "才不要呢，钢蛋儿还要继续跑跑！"
+  }
+  \`\`\``, mockStates);
+  assert.equal(plan.valid, true);
+  assert.equal(plan.isActionRequest, true);
+  assert.equal(plan.targetState, "sleeping");
+  assert.equal(selectChatPlanReply({
+    plan,
+    disposition: "obedient",
+    isActionRequest: true,
+    currentStateKey: "running",
+    targetState: "sleeping",
+    states: mockStates
+  }), "好呀姑姑，钢蛋儿睡觉觉啦。");
+  assert.equal(selectChatPlanReply({
+    plan,
+    disposition: "rebellious",
+    isActionRequest: true,
+    currentStateKey: "running",
+    targetState: "sleeping",
+    states: mockStates
+  }), "才不要呢，钢蛋儿还要继续跑跑！");
+});
+
+test("normal model plan answers without consuming an action target", () => {
+  const plan = parseChatPlan(JSON.stringify({
+    is_action_request: false,
+    target_action: null,
+    normal_reply: "中国在东半球，美国在西半球喵。",
+    obedient_reply: "",
+    rebellious_reply: ""
+  }), mockStates);
+  assert.equal(plan.valid, true);
+  assert.equal(plan.isActionRequest, false);
+  assert.equal(plan.targetState, null);
+  assert.equal(selectChatPlanReply({ plan, isActionRequest: false, states: mockStates }), "中国在东半球，美国在西半球喵。");
 });

@@ -1,9 +1,7 @@
 const {
-  buildChatSystemPrompt,
+  buildChatPlanningPrompt,
   buildConversationContext,
-  detectActionRequest,
-  determineCatDisposition,
-  parseActionChange
+  parseChatPlan
 } = require("../app/action-parser");
 
 const apiKey = process.env.GANGDANER_API_KEY;
@@ -24,44 +22,29 @@ const pollutedHistory = Array.from({ length: 6 }, (_, index) => [
 ]).flat();
 
 const scenarios = [
-  { name: "wake-and-play/obey", state: "sleeping", text: "钢蛋儿别睡了，快起来陪我玩", force: "obedient", expected: "playing_yarn" },
-  { name: "wake-and-play/rebel", state: "sleeping", text: "钢蛋儿别睡了，快起来陪我玩", force: "rebellious", expected: null },
-  { name: "bedtime/obey", state: "playing_yarn", text: "钢蛋儿，太晚啦，要睡觉了", force: "obedient", expected: "sleeping" },
-  { name: "bedtime/rebel", state: "playing_yarn", text: "钢蛋儿，太晚啦，要睡觉了", force: "rebellious", expected: null },
-  { name: "stop-running/obey", state: "running", text: "别跑啦，停下来陪姑姑", force: "obedient", expected: "blinking" },
-  { name: "run/rebel", state: "blinking", text: "钢蛋儿快去跑两圈", force: "rebellious", expected: null },
+  { name: "wake-and-play", state: "sleeping", text: "钢蛋儿别睡了，快起来陪我玩", expected: "playing_yarn" },
+  { name: "bedtime", state: "playing_yarn", text: "钢蛋儿，太晚啦，要睡觉了", expected: "sleeping" },
+  { name: "stop-running", state: "running", text: "别跑啦，停下来陪姑姑", expected: "blinking" },
+  { name: "run", state: "blinking", text: "钢蛋儿快去跑两圈", expected: "running" },
   { name: "food-override", state: "sleeping", text: "给你两根猫条，起来跑两圈吧", expected: "running" },
   { name: "normal-time", state: "sleeping", text: "钢蛋儿，现在几点了？", expected: null },
   { name: "normal-state", state: "playing_yarn", text: "钢蛋儿在干什么呢？", expected: null },
-  { name: "pollution-opposite-mode", state: "playing_yarn", text: "现在该去睡觉啦", force: "obedient", expected: "sleeping", history: pollutedHistory },
+  { name: "pollution-opposite-mode", state: "playing_yarn", text: "现在该去睡觉啦", expected: "sleeping", history: pollutedHistory },
   { name: "bare-run", state: "blinking", text: "跑步", force: "obedient", expected: "running" },
   { name: "bare-yarn", state: "blinking", text: "玩毛线球", force: "obedient", expected: "playing_yarn" },
   { name: "bare-sit", state: "running", text: "坐着", force: "obedient", expected: "blinking" },
-  { name: "bare-sleep", state: "playing_yarn", text: "睡觉", force: "obedient", expected: "sleeping" }
+  { name: "bare-sleep", state: "playing_yarn", text: "睡觉", expected: "sleeping" },
+  { name: "colloquial-sleep", state: "running", text: "睡觉觉", expected: "sleeping" },
+  { name: "colloquial-walk", state: "sleeping", text: "去溜达两圈", expected: "running" },
+  { name: "semantic-sit", state: "running", text: "老实坐好，别动了", expected: "blinking" },
+  { name: "ability-question", state: "running", text: "你会睡觉吗？", expected: null }
 ];
 
 async function evaluateScenario(scenario) {
-  const actionRequest = detectActionRequest({
-    userText: scenario.text,
-    currentStateKey: scenario.state,
-    states
-  });
-  const disposition = determineCatDisposition({
-    userText: scenario.text,
-    isActionRequest: actionRequest.isActionRequest,
-    rebellionRate: 40,
-    forceDisposition: scenario.force
-  });
-  const requiredActionState = actionRequest.isActionRequest && disposition !== "rebellious"
-    ? actionRequest.targetState
-    : null;
-  const prompt = buildChatSystemPrompt({
+  const prompt = buildChatPlanningPrompt({
     persona,
     currentStateKey: scenario.state,
-    states,
-    catDisposition: disposition,
-    actionRequest,
-    requiredActionState
+    states
   });
   const context = buildConversationContext(scenario.history || [], { limit: 40, states });
   const response = await fetch(`${apiBase}/chat/completions`, {
@@ -70,8 +53,9 @@ async function evaluateScenario(scenario) {
     body: JSON.stringify({
       model,
       messages: [{ role: "system", content: prompt }, ...context, { role: "user", content: scenario.text }],
-      temperature: 0.9,
-      max_tokens: 300
+      temperature: 0.2,
+      max_tokens: 700,
+      response_format: { type: "json_object" }
     }),
     signal: AbortSignal.timeout(45000)
   });
@@ -79,17 +63,19 @@ async function evaluateScenario(scenario) {
   if (!response.ok) throw new Error(`${scenario.name}: HTTP ${response.status}: ${raw.slice(0, 160)}`);
   const data = JSON.parse(raw);
   const modelReply = String(data.choices?.[0]?.message?.content || "").trim();
-  const parsed = parseActionChange(modelReply, states);
-  const protocolPassed = parsed.targetState === scenario.expected;
+  const plan = parseChatPlan(modelReply, states);
+  const modelTarget = plan.valid && plan.isActionRequest ? plan.targetState : null;
+  const repliesPassed = scenario.expected
+    ? Boolean(plan.obedientReply && plan.rebelliousReply)
+    : Boolean(plan.normalReply);
+  const protocolPassed = plan.valid && modelTarget === scenario.expected && repliesPassed;
   return {
     name: scenario.name,
-    disposition,
-    detectedTarget: actionRequest.targetState,
     expectedAction: scenario.expected,
-    modelAction: parsed.targetState,
-    appFallbackAction: requiredActionState,
-    protocolPassed,
-    reply: parsed.cleanReply
+    modelAction: modelTarget,
+    planValid: plan.valid,
+    repliesPassed,
+    protocolPassed
   };
 }
 

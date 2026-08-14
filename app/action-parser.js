@@ -11,23 +11,80 @@ const FOOD_KEYWORDS = [
 ];
 
 const ACTION_PATTERNS = {
-  sleeping: [/睡觉/g, /睡一会/g, /睡吧/g, /晚安/g, /休息(?:一下|一会|吧)?/g],
-  playing_yarn: [/毛线球/g, /陪(?:我|姑姑)?玩/g, /玩(?:一会|一下|一玩|儿|吧|游戏)/g],
-  running: [/跑步/g, /跑(?:一圈|两圈|几圈|起来|一下|吧)/g, /运动(?:一下|吧)?/g, /锻炼(?:一下|吧)?/g],
+  sleeping: [
+    /睡觉(?:觉)?/g, /睡(?:个|一|会儿?|一会儿?)觉/g,
+    /睡(?:一下|会儿?|一会儿?|吧|啦|了)/g, /睡(?=$|[\s，。！？!?,])/g,
+    /晚安/g, /休息(?:一下|会儿?|一会儿?|吧)?/g, /躺下/g
+  ],
+  playing_yarn: [
+    /毛线球/g, /陪(?:我|姑姑)?玩(?:一下|会儿?|一会儿?)?/g,
+    /玩(?:毛线球|球|玩|一玩|一下|会儿?|一会儿?|儿|吧|啦|游戏)/g,
+    /玩(?=$|[\s，。！？!?,])/g
+  ],
+  running: [
+    /跑步/g, /跑(?:跑|一跑|一下|会儿?|一会儿?|一圈|两圈|几圈|个圈|起来|吧|啦)/g,
+    /跑(?=$|[\s，。！？!?,])/g, /运动(?:一下|会儿?|一会儿?|吧)?/g, /锻炼(?:一下|会儿?|一会儿?|吧)?/g
+  ],
   blinking: [
-    /眨眼/g, /眨眨眼/g, /看看我/g, /安静(?:待着|趴着)/g,
-    /陪我工作/g, /陪着我/g, /坐(?:下|好|会儿?|一会儿?|着)/g, /坐(?=$|[\s，。！？!?,])/g,
+    /眨眼睛/g, /眨眼/g, /眨眨眼/g, /看看我/g,
+    /安静(?:点|一下|会儿?|一会儿?|待着|趴着)?/g, /待着/g,
+    /陪我工作/g, /陪着我/g, /陪我(?:待|坐)(?:一下|会儿?|一会儿?)?/g,
+    /坐(?:下|好|会儿?|一会儿?|着)/g, /坐(?=$|[\s，。！？!?,])/g,
     /别(?:再)?动(?:了|啦|吧)?/g
   ]
 };
 
 const REQUEST_SIGNAL = /(别|不要|不许|快|赶紧|去|来|陪|开始|继续|停止|停下|起来|醒醒|该|应该|要|让|给我|可以|能不能|好不好|吧|啦)/;
 const NEGATION_BEFORE_ACTION = /(别|不要|不许|不用|停止|结束|别再|不要再)\s*$/;
-const BARE_ACTION_COMMANDS = new Set([
-  "跑步", "跑起来", "玩毛线球", "玩一下", "睡觉", "睡一会",
-  "坐", "坐下", "坐好", "坐会", "坐会儿", "坐一会", "坐一会儿", "坐着",
-  "别动", "别动了", "陪我工作", "陪着我", "眨眼", "眨眨眼"
-]);
+const ACTION_COMMAND_ALIASES = {
+  sleeping: [
+    "睡", "睡觉", "睡觉觉", "睡会觉", "睡会儿觉", "睡一觉", "睡个觉",
+    "睡一下", "睡会", "睡会儿", "睡一会", "睡一会儿", "会睡觉",
+    "休息", "休息一下", "休息会", "休息会儿", "休息一会", "休息一会儿", "躺下", "晚安"
+  ],
+  playing_yarn: [
+    "玩", "玩玩", "玩一玩", "玩一下", "玩会", "玩会儿", "玩一会", "玩一会儿",
+    "玩球", "玩毛线球", "陪我玩", "陪我玩会", "陪我玩会儿", "陪我玩一会", "陪我玩一会儿"
+  ],
+  running: [
+    "跑", "跑步", "跑跑", "跑一跑", "跑一下", "跑会", "跑会儿", "跑一会", "跑一会儿",
+    "跑起来", "跑一圈", "跑两圈", "跑几圈", "运动", "运动一下", "锻炼", "锻炼一下"
+  ],
+  blinking: [
+    "眨眼", "眨眨眼", "眨眼睛", "坐", "坐下", "坐好", "坐会", "坐会儿", "坐一会", "坐一会儿", "坐着",
+    "别动", "别动了", "安静", "安静点", "安静一下", "安静待着", "待着",
+    "陪我工作", "陪着我", "陪我待会", "陪我待会儿", "陪我坐会", "陪我坐会儿"
+  ]
+};
+const BARE_ACTION_COMMANDS = new Set(Object.values(ACTION_COMMAND_ALIASES).flat());
+
+function normalizeActionCommand(text) {
+  return String(text || "")
+    .trim()
+    .replace(/^钢蛋儿(?:呀|啊|喵)?[，,:：！!\s]*/i, "")
+    .replace(/[，,。.!！?？:：；;、\s]/g, "")
+    .replace(/^(?:(?:请|麻烦|拜托)(?:你)?|你|给我|快点?|赶紧|赶快|去|来|开始|继续|该|应该|要|先)+/, "")
+    .replace(/(?:吧|呀|啊|啦|嘛|哦|噢|喵|呗|咯|了)+$/g, "")
+    .trim();
+}
+
+function resolveBareActionCommand(text, states = {}) {
+  const normalized = normalizeActionCommand(text);
+  if (!normalized) return null;
+
+  for (const [targetState, aliases] of Object.entries(ACTION_COMMAND_ALIASES)) {
+    if ((states[targetState] || Object.keys(states).length === 0) && aliases.includes(normalized)) {
+      return { targetState, reason: normalized };
+    }
+  }
+
+  for (const [targetState, state] of Object.entries(states)) {
+    if (normalizeActionCommand(state.label) === normalized) {
+      return { targetState, reason: normalized };
+    }
+  }
+  return null;
+}
 
 function checkFoodMention(text) {
   if (!text) return false;
@@ -80,14 +137,12 @@ function detectActionRequest({ userText = "", currentStateKey = "blinking", stat
     if (index >= 0) candidates.push({ targetState: key, index, reason: label });
   }
 
-  const bareText = text
-    .replace(/^钢蛋儿(?:呀|啊|喵)?[，,:：！!\s]*/i, "")
-    .replace(/[。.!！\s]+$/g, "")
-    .replace(/[吧呀啊啦喵]+$/g, "")
-    .trim();
-  const stateLabels = new Set(Object.values(states).map(state => String(state.label || "").trim()).filter(Boolean));
-  const bareActionRequest = (BARE_ACTION_COMMANDS.has(bareText) || stateLabels.has(bareText))
-    && !/(为什么|怎么|吗|呢|是不是|喜欢|会不会)/.test(text);
+  const bareAction = resolveBareActionCommand(text, states);
+  const bareActionRequest = Boolean(bareAction)
+    && !/(为什么|怎么|吗|呢|是不是|喜欢|会不会|什么|多少|哪里|哪儿)/.test(text);
+  if (bareActionRequest) {
+    candidates.push({ targetState: bareAction.targetState, index: text.length, reason: bareAction.reason });
+  }
   const explanatoryQuestion = /(为什么|怎么|是不是|喜欢|会不会).*(吗|呢|[?？])/.test(text)
     && !/(能不能|可不可以|可以.*吗|好不好|请)/.test(text);
   if (explanatoryQuestion) {
@@ -357,18 +412,123 @@ function buildChatSystemPrompt({
 ${availableActions}`;
 }
 
+function stripModelEnvelope(reply) {
+  let text = String(reply || "").trim();
+  text = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+  text = text.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+  const orphanThinkClose = text.toLowerCase().lastIndexOf("</think>");
+  if (orphanThinkClose >= 0) text = text.slice(orphanThinkClose + "</think>".length).trim();
+  return text.replace(/<think>[\s\S]*$/gi, "").trim();
+}
+
+function buildChatPlanningPrompt({
+  persona,
+  currentTime = new Date().toLocaleString("zh-CN"),
+  currentStateKey = "blinking",
+  states = {},
+  stateDescriptions = DEFAULT_STATE_DESCRIPTIONS
+}) {
+  const currentState = states[currentStateKey] || { label: currentStateKey };
+  const currentLabel = currentState.label || currentStateKey;
+  const currentDescription = stateDescriptions[currentStateKey] || `正在执行“${currentLabel}”动作`;
+  const availableActions = Object.entries(states)
+    .map(([key, state]) => `- ${key}: ${state.label || key}`)
+    .join("\n");
+
+  return `${persona}
+
+你现在同时负责“理解用户真实意图”和“准备钢蛋儿的候选回复”。必须根据整句话的语义判断，禁止只按关键词机械匹配。
+
+【实时事实】
+- 当前时间：${currentTime}
+- 当前动作：${currentStateKey}（${currentLabel}），${currentDescription}
+
+【动作语义规则】
+1. 用户是在对钢蛋儿说话。简短口语常省略主语，例如“该睡了”“睡觉觉”“去溜达两圈”“老实坐好”“别动了”都可能是让钢蛋儿执行动作。
+2. 让钢蛋儿开始、停止、继续或改变身体动作，is_action_request=true，并从可用动作中选择语义最接近的 target_action。
+3. target_action 只能原样使用下方列出的英文动作键，绝对不允许发明 sitting、staying、walking 等新键。
+4. “坐、坐下、坐好、别动、安静、待着、陪我工作/陪着我”统一映射 blinking；“睡、睡觉、休息、躺下”才映射 sleeping；“跑、溜达、活动筋骨、运动”映射 running；“玩、玩球、毛线球”映射 playing_yarn。
+5. 询问知识、时间、能力、喜好或原因属于普通对话。例如“你会睡觉吗”“跑步有什么好处”“毛线球好玩吗”不是动作请求。
+6. 动作候选回复只回应本轮要求和当前动作，不得延续历史中无关的话题、理由、同意或拒绝。
+7. obedient_reply 要自然接受要求；rebellious_reply 要自然明确拒绝并保持当前动作。不要在候选回复中提到概率、模式或 action change。
+8. 普通对话只填写 normal_reply；动作请求只填写 obedient_reply 和 rebellious_reply。回复称呼、人设和语气遵守上方人设。
+
+【可用动作】
+${availableActions}
+
+【强制输出格式】
+只输出一个 JSON 对象，不要 Markdown、代码围栏、思考过程或额外文字，并且必须包含以下全部字段：
+{"is_action_request":false,"target_action":null,"normal_reply":"","obedient_reply":"","rebellious_reply":""}`;
+}
+
+function parseChatPlan(reply, states = {}) {
+  const text = stripModelEnvelope(reply);
+  try {
+    const parsed = JSON.parse(text);
+    if (!parsed || typeof parsed !== "object" || typeof parsed.is_action_request !== "boolean") {
+      return { valid: false, raw: text };
+    }
+    const rawTarget = parsed.target_action ?? parsed.targetAction ?? null;
+    const targetState = resolveActionTarget(rawTarget, states);
+    const isActionRequest = parsed.is_action_request && Boolean(targetState);
+    return {
+      valid: parsed.is_action_request ? Boolean(targetState) : true,
+      isActionRequest,
+      targetState,
+      rawTarget: rawTarget == null ? null : String(rawTarget),
+      normalReply: typeof parsed.normal_reply === "string" ? parsed.normal_reply.trim() : "",
+      obedientReply: typeof parsed.obedient_reply === "string" ? parsed.obedient_reply.trim() : "",
+      rebelliousReply: typeof parsed.rebellious_reply === "string" ? parsed.rebellious_reply.trim() : "",
+      raw: text
+    };
+  } catch (_) {
+    return { valid: false, raw: text };
+  }
+}
+
+function selectChatPlanReply({
+  plan,
+  disposition = "normal",
+  isActionRequest = false,
+  currentStateKey = "blinking",
+  targetState = null,
+  states = {}
+} = {}) {
+  const currentLabel = states[currentStateKey]?.label || currentStateKey;
+  const targetLabel = states[targetState]?.label || targetState || "这个动作";
+  let reply = "";
+
+  if (!isActionRequest) {
+    reply = plan?.normalReply || plan?.obedientReply || plan?.rebelliousReply || "";
+  } else if (disposition === "rebellious") {
+    reply = plan?.rebelliousReply || `才不要嘛，钢蛋儿还想继续${currentLabel}～`;
+  } else if (disposition === "food_enthusiastic") {
+    reply = plan?.obedientReply || `有好吃的？好呀姑姑，钢蛋儿马上去${targetLabel}！`;
+  } else {
+    reply = plan?.obedientReply || `好呀姑姑，钢蛋儿这就去${targetLabel}～`;
+  }
+  return parseActionChange(reply, states).cleanReply.trim();
+}
+
 module.exports = {
+  ACTION_COMMAND_ALIASES,
   ACTION_PATTERNS,
   BARE_ACTION_COMMANDS,
   CatDispositionSampler,
   DEFAULT_STATE_DESCRIPTIONS,
   FOOD_KEYWORDS,
   buildChatSystemPrompt,
+  buildChatPlanningPrompt,
   buildConversationContext,
   checkFoodMention,
   createDispositionBag,
   detectActionRequest,
   determineCatDisposition,
+  normalizeActionCommand,
+  parseChatPlan,
   parseActionChange,
-  resolveActionTarget
+  resolveBareActionCommand,
+  resolveActionTarget,
+  selectChatPlanReply,
+  stripModelEnvelope
 };
