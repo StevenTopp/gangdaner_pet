@@ -17,6 +17,7 @@ const {
   detectActionRequest,
   parseActionChange
 } = require("./action-parser");
+const { fetchChatCompletion, formatChatApiError } = require("./chat-api");
 
 app.disableHardwareAcceleration();
 app.commandLine.appendSwitch("no-sandbox");
@@ -297,14 +298,11 @@ async function sendChat(text) {
     { role: "user", content: text }
   ];
   try {
-    const response = await fetch(`${settings.apiBase.replace(/\/$/, "")}/chat/completions`, {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
-      body: JSON.stringify({ model: settings.model, messages, temperature: 0.9, max_tokens: 500 })
+    const { data, attemptsUsed } = await fetchChatCompletion({
+      url: `${settings.apiBase.replace(/\/$/, "")}/chat/completions`,
+      apiKey: key,
+      payload: { model: settings.model, messages, temperature: 0.9, max_tokens: 500 }
     });
-    const raw = await response.text();
-    if (!response.ok) throw new Error(`HTTP ${response.status}: ${raw.slice(0, 200)}`);
-    const data = JSON.parse(raw);
     const rawReply = String(data.choices?.[0]?.message?.content || "").trim();
     if (!rawReply) throw new Error("接口没有返回内容");
 
@@ -340,10 +338,11 @@ async function sendChat(text) {
       actionRequest,
       disposition: catDisposition,
       actionChangedTo: requiredActionState,
-      modelAction: parsed.targetState
+      modelAction: parsed.targetState,
+      apiAttempts: attemptsUsed
     };
   } catch (e) {
-    return { ok: false, error: `暂时没连上模型：${e.message}` };
+    return { ok: false, error: `暂时没连上模型：${formatChatApiError(e)}` };
   }
 }
 

@@ -79,6 +79,11 @@ test("detectActionRequest distinguishes commands from normal questions", () => {
     assert.equal(result.targetState, "blinking", text);
     assert.equal(result.isActionRequest, true, text);
   }
+  for (const text of ["坐", "坐下", "钢蛋儿坐会", "坐一会儿", "别动", "钢蛋儿别动了"]) {
+    const result = detectActionRequest({ userText: text, currentStateKey: "running", states: mockStates });
+    assert.equal(result.targetState, "blinking", text);
+    assert.equal(result.isActionRequest, true, text);
+  }
   assert.equal(detectActionRequest({
     userText: "钢蛋儿为什么坐着呢？",
     currentStateKey: "sleeping",
@@ -100,6 +105,13 @@ test("detectActionRequest distinguishes commands from normal questions", () => {
     assert.equal(detectActionRequest({
       userText: text,
       currentStateKey: "blinking",
+      states: mockStates
+    }).isActionRequest, false, text);
+  }
+  for (const text of ["坐标是什么？", "你坐过高铁吗？"]) {
+    assert.equal(detectActionRequest({
+      userText: text,
+      currentStateKey: "running",
       states: mockStates
     }).isActionRequest, false, text);
   }

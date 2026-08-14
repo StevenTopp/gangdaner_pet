@@ -7,7 +7,7 @@
   "author": "钢蛋儿桌面宠物 contributors",
   "scripts": {
     "start": "electron .",
-    "check": "node --check app/main.js && node --check app/action-parser.js && node --check app/preload.js && node --check app/桌宠运行时.js && node --check scripts/evaluate_action_chat.js && node --test test/*.test.js",
+    "check": "node --check app/main.js && node --check app/action-parser.js && node --check app/chat-api.js && node --check app/preload.js && node --check app/桌宠运行时.js && node --check scripts/evaluate_action_chat.js && node --test test/*.test.js",
     "dist:win": "electron-builder --win portable --publish never"
   },
   "build": {
