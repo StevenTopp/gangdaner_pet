@@ -7,6 +7,10 @@ const desktopHtml = fs.readFileSync(path.join(__dirname, "..", "app", "桌宠桌
 
 test("long desktop bubbles stay inside the window and can scroll", () => {
   assert.match(desktopHtml, /--bubble-max-height/);
+  assert.match(desktopHtml, /left:\s*1\.5%/);
+  assert.match(desktopHtml, /right:\s*1\.5%/);
+  assert.match(desktopHtml, /top:\s*6px/);
+  assert.match(desktopHtml, /window\.innerHeight \* 0\.7/);
   assert.match(desktopHtml, /overflow-y:\s*auto/);
   assert.match(desktopHtml, /bubble\.scrollTop=0/);
   assert.match(desktopHtml, /滚轮查看完整回复/);
