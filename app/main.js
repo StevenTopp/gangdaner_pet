@@ -49,6 +49,9 @@ let currentRealX = 0;
 let runTrackMinX = 0;
 let runTrackMaxX = 0;
 let lastRunTickAt = 0;
+let runWindowY = 0;
+let runWindowWidth = 0;
+let runWindowHeight = 0;
 
 function resetRunningTrack(bounds, chooseDirection = false) {
   const workArea = screen.getDisplayMatching(bounds).workArea;
@@ -65,6 +68,9 @@ function resetRunningTrack(bounds, chooseDirection = false) {
   );
   runTrackMinX = track.minX;
   runTrackMaxX = track.maxX;
+  runWindowY = bounds.y;
+  runWindowWidth = bounds.width;
+  runWindowHeight = bounds.height;
   lastRunTickAt = performance.now();
 }
 
@@ -103,7 +109,24 @@ function startRunningMovement() {
       mainWindow.webContents.send("gangdaner-pet:run-direction", runDirection);
     }
     const nextX = Math.round(currentRealX);
-    if (nextX !== bounds.x) mainWindow.setPosition(nextX, bounds.y, false);
+    if (
+      nextX !== bounds.x ||
+      bounds.y !== runWindowY ||
+      bounds.width !== runWindowWidth ||
+      bounds.height !== runWindowHeight
+    ) {
+      // setPosition() can progressively resize a transparent frameless window
+      // on mixed-DPI Windows desktops. The video stays centered at 50%, so that
+      // native width drift looks like asymmetric speed and pushes the cat right.
+      // Reassert the complete rectangle on every move to keep its visual anchor
+      // and desktop hit area invariant.
+      mainWindow.setBounds({
+        x: nextX,
+        y: runWindowY,
+        width: runWindowWidth,
+        height: runWindowHeight
+      }, false);
+    }
   }, 16);
 }
 
