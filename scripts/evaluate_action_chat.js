@@ -33,7 +33,11 @@ const scenarios = [
   { name: "food-override", state: "sleeping", text: "给你两根猫条，起来跑两圈吧", expected: "running" },
   { name: "normal-time", state: "sleeping", text: "钢蛋儿，现在几点了？", expected: null },
   { name: "normal-state", state: "playing_yarn", text: "钢蛋儿在干什么呢？", expected: null },
-  { name: "pollution-opposite-mode", state: "playing_yarn", text: "现在该去睡觉啦", force: "obedient", expected: "sleeping", history: pollutedHistory }
+  { name: "pollution-opposite-mode", state: "playing_yarn", text: "现在该去睡觉啦", force: "obedient", expected: "sleeping", history: pollutedHistory },
+  { name: "bare-run", state: "blinking", text: "跑步", force: "obedient", expected: "running" },
+  { name: "bare-yarn", state: "blinking", text: "玩毛线球", force: "obedient", expected: "playing_yarn" },
+  { name: "bare-sit", state: "running", text: "坐着", force: "obedient", expected: "blinking" },
+  { name: "bare-sleep", state: "playing_yarn", text: "睡觉", force: "obedient", expected: "sleeping" }
 ];
 
 async function evaluateScenario(scenario) {

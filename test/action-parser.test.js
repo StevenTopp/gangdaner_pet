@@ -84,6 +84,25 @@ test("detectActionRequest distinguishes commands from normal questions", () => {
     currentStateKey: "sleeping",
     states: mockStates
   }).isActionRequest, false);
+  const bareCommands = {
+    "跑步": "running",
+    "钢蛋儿，跑步！": "running",
+    "玩毛线球": "playing_yarn",
+    "睡觉": "sleeping",
+    "坐着": "blinking"
+  };
+  for (const [text, targetState] of Object.entries(bareCommands)) {
+    const result = detectActionRequest({ userText: text, currentStateKey: "sleeping", states: mockStates });
+    assert.equal(result.targetState, targetState, text);
+    assert.equal(result.isActionRequest, targetState !== "sleeping", text);
+  }
+  for (const text of ["你喜欢跑步吗？", "为什么要睡觉呢？", "毛线球好玩吗？"]) {
+    assert.equal(detectActionRequest({
+      userText: text,
+      currentStateKey: "blinking",
+      states: mockStates
+    }).isActionRequest, false, text);
+  }
 });
 
 test("food exception and disposition probability only apply to action requests", () => {

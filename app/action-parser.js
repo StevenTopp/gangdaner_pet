@@ -22,6 +22,10 @@ const ACTION_PATTERNS = {
 
 const REQUEST_SIGNAL = /(别|不要|不许|快|赶紧|去|来|陪|开始|继续|停止|停下|起来|醒醒|该|应该|要|让|给我|可以|能不能|好不好|吧|啦)/;
 const NEGATION_BEFORE_ACTION = /(别|不要|不许|不用|停止|结束|别再|不要再)\s*$/;
+const BARE_ACTION_COMMANDS = new Set([
+  "跑步", "跑起来", "玩毛线球", "玩一下", "睡觉", "睡一会",
+  "坐着", "坐一会", "陪我工作", "陪着我", "眨眼", "眨眨眼"
+]);
 
 function checkFoodMention(text) {
   if (!text) return false;
@@ -74,9 +78,20 @@ function detectActionRequest({ userText = "", currentStateKey = "blinking", stat
     if (index >= 0) candidates.push({ targetState: key, index, reason: label });
   }
 
-  const bareBlinkingRequest = /(?:陪我工作|陪着我|坐一会|坐着)[吧呀啊。！!]*$/.test(text)
-    && !/(为什么|怎么|吗|呢|是不是)/.test(text);
-  if (!candidates.length || (!REQUEST_SIGNAL.test(text) && !bareBlinkingRequest)) {
+  const bareText = text
+    .replace(/^钢蛋儿(?:呀|啊|喵)?[，,:：！!\s]*/i, "")
+    .replace(/[。.!！\s]+$/g, "")
+    .replace(/[吧呀啊啦喵]+$/g, "")
+    .trim();
+  const stateLabels = new Set(Object.values(states).map(state => String(state.label || "").trim()).filter(Boolean));
+  const bareActionRequest = (BARE_ACTION_COMMANDS.has(bareText) || stateLabels.has(bareText))
+    && !/(为什么|怎么|吗|呢|是不是|喜欢|会不会)/.test(text);
+  const explanatoryQuestion = /(为什么|怎么|是不是|喜欢|会不会).*(吗|呢|[?？])/.test(text)
+    && !/(能不能|可不可以|可以.*吗|好不好|请)/.test(text);
+  if (explanatoryQuestion) {
+    return { isActionRequest: false, targetState: null, reason: "normal_question" };
+  }
+  if (!candidates.length || (!REQUEST_SIGNAL.test(text) && !bareActionRequest)) {
     return { isActionRequest: false, targetState: null, reason: "normal_conversation" };
   }
 
@@ -342,6 +357,7 @@ ${availableActions}`;
 
 module.exports = {
   ACTION_PATTERNS,
+  BARE_ACTION_COMMANDS,
   CatDispositionSampler,
   DEFAULT_STATE_DESCRIPTIONS,
   FOOD_KEYWORDS,
