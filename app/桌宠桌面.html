@@ -65,6 +65,12 @@
       color: #28344d;
       font: 600 13px/1.4 "Microsoft YaHei UI", sans-serif;
       box-shadow: 0 8px 26px rgba(31, 45, 76, 0.18);
+      max-height: var(--bubble-max-height, 96px);
+      overflow-x: hidden;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(83, 96, 123, 0.4) transparent;
       opacity: 0;
       transform: translateY(6px);
       transform-origin: bottom center;
@@ -74,6 +80,9 @@
       word-break: break-word;
       white-space: normal;
     }
+    #bubble::-webkit-scrollbar { width: 6px; }
+    #bubble::-webkit-scrollbar-track { background: transparent; }
+    #bubble::-webkit-scrollbar-thumb { background: rgba(83, 96, 123, 0.4); border-radius: 999px; }
     #bubble.show { opacity: 1; transform: none; pointer-events: auto; cursor: pointer; }
     #bubble.reminder { background: rgba(255, 248, 222, 0.98); color: #795319; }
 
@@ -147,9 +156,12 @@
     let petSize = 420;
     function applyPetSize() {
       document.documentElement.style.setProperty("--pet-size", petSize + "px");
+      const availableBubbleHeight = Math.max(48, window.innerHeight - petSize * 0.74 - 12);
+      document.documentElement.style.setProperty("--bubble-max-height", availableBubbleHeight + "px");
     }
     window.gangdanerPet.getSettings().then((s) => { petSize = s.sizePx; applyPetSize(); });
     window.gangdanerPet.onSettings((s) => { petSize = s.sizePx; applyPetSize(); });
+    window.addEventListener("resize", applyPetSize);
     const petRoot = document.getElementById("petRoot");
     window.gangdanerPet.getManifest().then((manifest) => {
       pet = window.createGangdanerPet(petRoot, manifest);
@@ -162,7 +174,25 @@
       v.style.transform = dir === -1 ? "scaleX(-1)" : "scaleX(1)";
     });
     const bubble=document.getElementById("bubble"); let bubbleTimer;
-    window.gangdanerPet.onBubble(({text,kind,seconds})=>{bubble.textContent=text;bubble.className=`show ${kind==='chatter'||kind==='chat'?'':'reminder'}`;clearTimeout(bubbleTimer);bubbleTimer=setTimeout(()=>bubble.className="",Number(seconds||8)*1000);});
+    function bubbleDisplaySeconds(text, kind, configuredSeconds) {
+      const baseSeconds = Math.max(3, Number(configuredSeconds) || 8);
+      if (kind !== "chat") return baseSeconds;
+      const readingSeconds = Math.ceil(Array.from(String(text || "")).length / 8);
+      return Math.min(30, Math.max(baseSeconds, readingSeconds));
+    }
+    window.gangdanerPet.onBubble(({text,kind,seconds})=>{
+      bubble.textContent=text;
+      bubble.scrollTop=0;
+      bubble.className=`show ${kind==='chatter'||kind==='chat'?'':'reminder'}`;
+      requestAnimationFrame(()=>{
+        bubble.scrollTop=0;
+        bubble.title=bubble.scrollHeight>bubble.clientHeight
+          ? "滚轮查看完整回复；点击打开聊天窗口"
+          : "点击打开聊天窗口";
+      });
+      clearTimeout(bubbleTimer);
+      bubbleTimer=setTimeout(()=>bubble.className="",bubbleDisplaySeconds(text,kind,seconds)*1000);
+    });
     bubble.addEventListener("click",()=>{bubble.className="";window.gangdanerPet.openChat();});
 
     // Quick Chat UI Handling
