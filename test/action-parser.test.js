@@ -3,7 +3,9 @@ const test = require("node:test");
 const {
   resolveActionTarget,
   parseActionChange,
-  buildChatSystemPrompt
+  buildChatSystemPrompt,
+  checkFoodMention,
+  determineCatDisposition
 } = require("../app/action-parser");
 
 const mockStates = {
@@ -47,16 +49,77 @@ test("parseActionChange cleanly separates reply and action change directive", ()
   assert.equal(res4.rawAction, null);
 });
 
-test("buildChatSystemPrompt contains current state and state descriptions", () => {
-  const prompt = buildChatSystemPrompt({
+test("checkFoodMention identifies treats and snacks", () => {
+  assert.equal(checkFoodMention("快去跑两圈，跑完奖励一根猫条！"), true);
+  assert.equal(checkFoodMention("想不想吃冻干呀？"), true);
+  assert.equal(checkFoodMention("姑姑给你准备了罐头"), true);
+  assert.equal(checkFoodMention("有好多好吃的零食哦"), true);
+  assert.equal(checkFoodMention("快去睡觉吧"), false);
+  assert.equal(checkFoodMention("现在几点啦"), false);
+});
+
+test("determineCatDisposition respects food exception, rebellion toggle and rates", () => {
+  // Food always triggers food_enthusiastic regardless of rate
+  const foodResult = determineCatDisposition({
+    userText: "给你吃猫条，快去睡觉",
+    rebellionEnabled: true,
+    rebellionRate: 100
+  });
+  assert.equal(foodResult, "food_enthusiastic");
+
+  // Disabled rebellion always returns obedient
+  const disabledResult = determineCatDisposition({
+    userText: "快去睡觉",
+    rebellionEnabled: false,
+    rebellionRate: 100
+  });
+  assert.equal(disabledResult, "obedient");
+
+  // 0% rebellion rate returns obedient
+  const zeroRateResult = determineCatDisposition({
+    userText: "快去睡觉",
+    rebellionEnabled: true,
+    rebellionRate: 0
+  });
+  assert.equal(zeroRateResult, "obedient");
+
+  // 100% rebellion rate returns rebellious
+  const fullRebelResult = determineCatDisposition({
+    userText: "快去睡觉",
+    rebellionEnabled: true,
+    rebellionRate: 100
+  });
+  assert.equal(fullRebelResult, "rebellious");
+});
+
+test("buildChatSystemPrompt contains current state and disposition sections", () => {
+  const obedientPrompt = buildChatSystemPrompt({
     persona: "你是布偶猫钢蛋儿",
     currentTime: "2026/8/14 13:00:00",
     currentStateKey: "sleeping",
-    states: mockStates
+    states: mockStates,
+    catDisposition: "obedient"
   });
+  assert.ok(obedientPrompt.includes("【钢蛋儿此刻的实时状态】：睡觉"));
+  assert.ok(obedientPrompt.includes("🐱 听话乖巧模式"));
 
-  assert.ok(prompt.includes("【钢蛋儿此刻的实时状态】：睡觉"));
-  assert.ok(prompt.includes("打呼噜做美梦"));
-  assert.ok(prompt.includes("action change: <目标动作名>"));
-  assert.ok(prompt.includes("- 玩毛线球（playing_yarn）"));
+  const rebelPrompt = buildChatSystemPrompt({
+    persona: "你是布偶猫钢蛋儿",
+    currentTime: "2026/8/14 13:00:00",
+    currentStateKey: "playing_yarn",
+    states: mockStates,
+    catDisposition: "rebellious"
+  });
+  assert.ok(rebelPrompt.includes("😼 唱反调/傲娇任性模式"));
+  assert.ok(rebelPrompt.includes("坚决唱反调 / 傲娇拒绝 / 赖皮"));
+
+  const foodPrompt = buildChatSystemPrompt({
+    persona: "你是布偶猫钢蛋儿",
+    currentTime: "2026/8/14 13:00:00",
+    currentStateKey: "running",
+    states: mockStates,
+    catDisposition: "food_enthusiastic"
+  });
+  assert.ok(foodPrompt.includes("✨ 极度兴奋听话模式"));
+  assert.ok(foodPrompt.includes("听到猫条/零食/好吃的啦"));
 });

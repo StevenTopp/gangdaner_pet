@@ -12,7 +12,8 @@ const {
 } = require("./run-movement");
 const {
   buildChatSystemPrompt,
-  parseActionChange
+  parseActionChange,
+  determineCatDisposition
 } = require("./action-parser");
 
 app.disableHardwareAcceleration();
@@ -29,6 +30,7 @@ const DEFAULT_SETTINGS = {
   sizePx: 420, x: null, y: null, hideOnFullScreen: false,
   apiBase: "https://apihub.agnes-ai.com/v1", model: "agnes-2.0-flash", persona: DEFAULT_PERSONA,
   memoryEnabled: true, memoryTurns: 20,
+  rebellionEnabled: true, rebellionRate: 40,
   chatterEnabled: true, chatterMinMinutes: 12, chatterMaxMinutes: 18, bubbleSeconds: 8,
   waterEnabled: true, waterMinutes: 60,
   breakEnabled: true, breakMinutes: 90,
@@ -155,6 +157,8 @@ function clamp(v, min, max, fallback) { v = Number(v); return Number.isFinite(v)
 function normalizeSettings(v = {}) { return { ...DEFAULT_SETTINGS, ...v,
   apiBase: DEFAULT_SETTINGS.apiBase, model: DEFAULT_SETTINGS.model,
   sizePx: Math.round(clamp(v.sizePx, 88, 760, 420)), memoryTurns: Math.round(clamp(v.memoryTurns, 1, 50, 20)),
+  rebellionEnabled: Boolean(v.rebellionEnabled ?? true),
+  rebellionRate: Math.round(clamp(v.rebellionRate, 0, 100, 40)),
   chatterMinMinutes: clamp(v.chatterMinMinutes, 1, 240, 12), chatterMaxMinutes: clamp(v.chatterMaxMinutes, 1, 240, 18), bubbleSeconds: clamp(v.bubbleSeconds, 3, 30, 8),
   waterEnabled: Boolean(v.waterEnabled ?? true), waterMinutes: clamp(v.waterMinutes, 5, 480, 60),
   breakEnabled: Boolean(v.breakEnabled ?? true), breakMinutes: clamp(v.breakMinutes, 5, 480, 90),
@@ -258,10 +262,16 @@ async function sendChat(text) {
   const key = readApiKey();
   if (!key) return { ok: false, error: "请先在设置中填写 API 密钥" };
   conversation.push({ role: "user", content: text });
+  const catDisposition = determineCatDisposition({
+    userText: text,
+    rebellionEnabled: settings.rebellionEnabled,
+    rebellionRate: settings.rebellionRate
+  });
   const systemPrompt = buildChatSystemPrompt({
     persona: settings.persona,
     currentStateKey: currentState,
-    states: manifest.states || {}
+    states: manifest.states || {},
+    catDisposition
   });
   const messages = [{ role: "system", content: systemPrompt }].concat(conversation.slice(-settings.memoryTurns * 2));
   try {
