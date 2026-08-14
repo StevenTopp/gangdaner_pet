@@ -10,6 +10,10 @@ const {
   runSpeedPxPerSecond,
   scaledRunDistance
 } = require("./run-movement");
+const {
+  buildChatSystemPrompt,
+  parseActionChange
+} = require("./action-parser");
 
 app.disableHardwareAcceleration();
 app.commandLine.appendSwitch("no-sandbox");
@@ -225,7 +229,47 @@ function actionMenu() { return stateEntries().map(([k, s]) => ({ label: s.label,
 function showContextMenu() { Menu.buildFromTemplate([{ label: "切换动作", submenu: actionMenu() }, { label: "显示大小", submenu: [100,200,300,420,680].map(n => ({ label: `${n}px`, click: () => applySettings({ sizePx:n }) })) }, { type:"separator" }, { label:"设置...", click:createSettingsWindow }, { label:"打开素材文件夹", click:() => shell.openPath(assetsFolder()) }, { label:"打开导航页", click:() => shell.openExternal("https://steven.00030001.xyz/") }, { label:"陪姑姑聊天", click:createChatWindow }, { label:"回到右下角", click:() => { const p=defaultPosition(Math.max(settings.sizePx,300)); mainWindow.setPosition(p.x,p.y); } }, { type:"separator" }, { label:"退出钢蛋儿桌面宠物", click:() => app.quit() }]).popup({ window:mainWindow }); }
 function createMenu() { Menu.setApplicationMenu(Menu.buildFromTemplate([{ label:"钢蛋儿桌面宠物", submenu:[{ label:"切换动作", submenu:actionMenu() }, { label:"陪姑姑聊天", click:createChatWindow }, { label:"设置...", click:createSettingsWindow }, { label:"打开导航页", click:() => shell.openExternal("https://steven.00030001.xyz/") }, { type:"separator" }, { label:"退出", click:() => app.quit() }] }])); }
 async function replaceAsset(key) { const s=manifest.states[key]; if(!s)return{ok:false}; const r=await dialog.showOpenDialog(settingsWindow||mainWindow,{properties:["openFile"],filters:[{name:"桌宠素材",extensions:["webm","gif","webp","apng","png","mp4"]}]}); if(r.canceled)return{ok:false,canceled:true}; const ext=path.extname(r.filePaths[0]), name=`${path.parse(s.sourceFile).name}${ext}`, target=path.join(assetsFolder(),name); if(path.resolve(r.filePaths[0])!==path.resolve(target))fs.copyFileSync(r.filePaths[0],target); const disk=loadJson(path.join(assetsFolder(),"状态映射.json"),{}); disk.states[key].file=name; saveJson(path.join(assetsFolder(),"状态映射.json"),disk); s.sourceFile=name;s.file=pathToFileURL(target).href;mainWindow.reload();return{ok:true,path:target}; }
-async function sendChat(text) { text=String(text||"").trim(); if(!text)return{ok:false,error:"请输入内容"}; const key=readApiKey(); if(!key)return{ok:false,error:"请先在设置中填写 API 密钥"}; conversation.push({role:"user",content:text}); const stateLabel=manifest.states[currentState]?.label||currentState; const messages=[{role:"system",content:`${settings.persona}\n当前时间：${new Date().toLocaleString("zh-CN")}。钢蛋儿当前正在执行“${stateLabel}”动作，可以自然结合动作，但不要机械重复。不要输出情绪标签。`}].concat(conversation.slice(-settings.memoryTurns*2)); try { const response=await fetch(`${settings.apiBase.replace(/\/$/,"")}/chat/completions`,{method:"POST",headers:{"content-type":"application/json",authorization:`Bearer ${key}`},body:JSON.stringify({model:settings.model,messages,temperature:0.8,max_tokens:500})}); const raw=await response.text(); if(!response.ok)throw new Error(`HTTP ${response.status}: ${raw.slice(0,200)}`); const data=JSON.parse(raw), reply=String(data.choices?.[0]?.message?.content||"").trim(); if(!reply)throw new Error("接口没有返回内容"); conversation.push({role:"assistant",content:reply}); if(settings.memoryEnabled)saveJson(userPath(MEMORY_FILE),conversation.slice(-settings.memoryTurns*2)); const currentHistory=conversation.slice(-settings.memoryTurns*2); mainWindow?.webContents.send("gangdaner-pet:conversation",currentHistory); chatWindow?.webContents.send("gangdaner-pet:conversation",currentHistory); showBubble(reply,"chat"); return{ok:true,reply,conversation:currentHistory}; } catch(e) { conversation.pop(); return{ok:false,error:`暂时没连上模型：${e.message}`}; } }
+async function sendChat(text) {
+  text = String(text || "").trim();
+  if (!text) return { ok: false, error: "请输入内容" };
+  const key = readApiKey();
+  if (!key) return { ok: false, error: "请先在设置中填写 API 密钥" };
+  conversation.push({ role: "user", content: text });
+  const systemPrompt = buildChatSystemPrompt({
+    persona: settings.persona,
+    currentStateKey: currentState,
+    states: manifest.states || {}
+  });
+  const messages = [{ role: "system", content: systemPrompt }].concat(conversation.slice(-settings.memoryTurns * 2));
+  try {
+    const response = await fetch(`${settings.apiBase.replace(/\/$/, "")}/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
+      body: JSON.stringify({ model: settings.model, messages, temperature: 0.8, max_tokens: 500 })
+    });
+    const raw = await response.text();
+    if (!response.ok) throw new Error(`HTTP ${response.status}: ${raw.slice(0, 200)}`);
+    const data = JSON.parse(raw);
+    const rawReply = String(data.choices?.[0]?.message?.content || "").trim();
+    if (!rawReply) throw new Error("接口没有返回内容");
+
+    const { cleanReply, targetState } = parseActionChange(rawReply, manifest.states || {});
+    if (targetState) {
+      sendState(targetState, true);
+    }
+
+    conversation.push({ role: "assistant", content: cleanReply });
+    if (settings.memoryEnabled) saveJson(userPath(MEMORY_FILE), conversation.slice(-settings.memoryTurns * 2));
+    const currentHistory = conversation.slice(-settings.memoryTurns * 2);
+    mainWindow?.webContents.send("gangdaner-pet:conversation", currentHistory);
+    chatWindow?.webContents.send("gangdaner-pet:conversation", currentHistory);
+    showBubble(cleanReply, "chat");
+    return { ok: true, reply: cleanReply, conversation: currentHistory };
+  } catch (e) {
+    conversation.pop();
+    return { ok: false, error: `暂时没连上模型：${e.message}` };
+  }
+}
 
 function triggerPatting() { const lines = manifest.patting?.[currentState] || manifest.patting?.blinking || manifest.chatter?.[currentState] || []; if (lines.length) showBubble(randomItem(lines), "chatter"); }
 function registerIpc() {

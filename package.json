@@ -1,13 +1,13 @@
 {
   "name": "gangdaner-pet",
-  "version": "1.3.3",
+  "version": "1.3.4",
   "private": true,
   "description": "钢蛋儿桌面宠物",
   "main": "app/main.js",
   "author": "钢蛋儿桌面宠物 contributors",
   "scripts": {
     "start": "electron .",
-    "check": "node --check app/main.js && node --check app/preload.js && node --check app/桌宠运行时.js && node --test test/*.test.js",
+    "check": "node --check app/main.js && node --check app/action-parser.js && node --check app/preload.js && node --check app/桌宠运行时.js && node --test test/*.test.js",
     "dist:win": "electron-builder --win portable --publish never"
   },
   "build": {
