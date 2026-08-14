@@ -235,14 +235,24 @@
       closeQuickChat();
     });
 
-    // Multi-click detection (Double-click = Patting, Triple-click = Header Chat Box)
+    // Pet gestures: single-click = patting, double-click = quick chat.
+    // A press only counts as a click when it is short and never becomes a drag.
     const DRAG_THRESHOLD = 5;
+    const MAX_CLICK_DURATION = 450;
+    const DOUBLE_CLICK_DELAY = 260;
     let pointerId = null;
     let startX = 0;
     let startY = 0;
+    let pointerDownAt = 0;
     let dragging = false;
     let clickCount = 0;
     let clickTimer = null;
+
+    function resetPendingClick() {
+      clearTimeout(clickTimer);
+      clickTimer = null;
+      clickCount = 0;
+    }
 
     function triggerPattingEffect() {
       petRoot.classList.remove("pat-bounce");
@@ -253,22 +263,27 @@
     }
 
     window.addEventListener("pointerdown", (event) => {
-      if (window.gangdanerPet) {
-        window.gangdanerPet.setIgnoreMouse(false);
-        window.gangdanerPet.tryWakeUp();
-      }
-
       if (quickChatBox.classList.contains("show") && !quickChatBox.contains(event.target)) {
         closeQuickChat();
       }
 
-
       if (event.button !== 0 || !window.gangdanerPet) return;
-      if (quickChatBox.contains(event.target)) return;
+      // Bubble/input controls have their own click behavior and must not also pat the pet.
+      if (quickChatBox.contains(event.target) || bubble.contains(event.target)) return;
+      if (event.target !== petRoot) return;
+
+      window.gangdanerPet.setIgnoreMouse(false);
+      window.gangdanerPet.tryWakeUp();
+
+      // A second press has started: wait for its release before deciding whether it
+      // is a real double-click. This prevents the first single-click timer firing
+      // while the second press is still down.
+      if (clickCount === 1) clearTimeout(clickTimer);
 
       pointerId = event.pointerId;
       startX = event.screenX;
       startY = event.screenY;
+      pointerDownAt = performance.now();
       dragging = false;
       document.body.setPointerCapture(pointerId);
     });
@@ -277,39 +292,46 @@
       if (pointerId !== event.pointerId || !window.gangdanerPet) return;
       if (!dragging && Math.hypot(event.screenX - startX, event.screenY - startY) >= DRAG_THRESHOLD) {
         dragging = true;
+        resetPendingClick();
         document.body.classList.add("dragging");
         window.gangdanerPet.startDrag();
       }
       if (dragging) window.gangdanerPet.moveDrag();
     });
 
-    function endDrag(event) {
+    function finishPointer(event, cancelled = false) {
       if (pointerId !== event.pointerId) return;
-      if (dragging && window.gangdanerPet) {
+      const wasDragging = dragging;
+      const pressDuration = performance.now() - pointerDownAt;
+      if (wasDragging && window.gangdanerPet) {
         window.gangdanerPet.endDrag();
-      } else if (!dragging) {
+      } else if (!cancelled && pressDuration <= MAX_CLICK_DURATION) {
         clickCount++;
-        if (clickCount === 3) {
+        if (clickCount === 2) {
           clearTimeout(clickTimer);
           clickCount = 0;
           openQuickChat();
         } else {
           clearTimeout(clickTimer);
           clickTimer = setTimeout(() => {
-            if (clickCount === 2) {
+            if (clickCount === 1) {
               triggerPattingEffect();
             }
             clickCount = 0;
-          }, 260);
+            clickTimer = null;
+          }, DOUBLE_CLICK_DELAY);
         }
+      } else {
+        // pointercancel, a long press, and every drag all invalidate click gestures.
+        resetPendingClick();
       }
       document.body.classList.remove("dragging");
       try { document.body.releasePointerCapture(pointerId); } catch (_) {}
       pointerId = null;
       dragging = false;
     }
-    window.addEventListener("pointerup", endDrag);
-    window.addEventListener("pointercancel", endDrag);
+    window.addEventListener("pointerup", (event) => finishPointer(event, false));
+    window.addEventListener("pointercancel", (event) => finishPointer(event, true));
     window.addEventListener("contextmenu", (event) => {
       event.preventDefault();
       if (window.gangdanerPet) window.gangdanerPet.showMenu();

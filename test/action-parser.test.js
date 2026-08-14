@@ -181,6 +181,25 @@ test("changing the configured rate rebuilds an exact 100-item bag", () => {
   assert.equal(sampler.bag.length, remainingBeforeExceptions);
 });
 
+test("the default rebellion probability is 30 percent", () => {
+  const sampler = new CatDispositionSampler(() => 0.5);
+  const results = Array.from({ length: 100 }, () => sampler.draw({
+    userText: "快去睡觉",
+    isActionRequest: true
+  }));
+  assert.equal(results.filter(value => value === "rebellious").length, 30);
+  assert.equal(determineCatDisposition({
+    userText: "快去睡觉",
+    isActionRequest: true,
+    random: () => 0.29
+  }), "rebellious");
+  assert.equal(determineCatDisposition({
+    userText: "快去睡觉",
+    isActionRequest: true,
+    random: () => 0.3
+  }), "obedient");
+});
+
 test("action conversations are removed from model history", () => {
   const context = buildConversationContext([
     { role: "user", content: "钢蛋儿快去睡觉" },

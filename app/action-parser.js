@@ -112,7 +112,7 @@ function determineCatDisposition({
   userText = "",
   isActionRequest = false,
   rebellionEnabled = true,
-  rebellionRate = 40,
+  rebellionRate = 30,
   forceDisposition = null,
   random = Math.random
 } = {}) {
@@ -192,7 +192,7 @@ class CatDispositionSampler {
     this.recent = [];
   }
 
-  draw({ userText = "", isActionRequest = false, rebellionEnabled = true, rebellionRate = 40 } = {}) {
+  draw({ userText = "", isActionRequest = false, rebellionEnabled = true, rebellionRate = 30 } = {}) {
     if (checkFoodMention(userText)) return "food_enthusiastic";
     if (!isActionRequest) return "normal";
     if (!rebellionEnabled) return "obedient";
