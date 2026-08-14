@@ -111,7 +111,7 @@ test("buildChatSystemPrompt contains current state and disposition sections", ()
     catDisposition: "rebellious"
   });
   assert.ok(rebelPrompt.includes("😼 唱反调/傲娇任性模式"));
-  assert.ok(rebelPrompt.includes("坚决唱反调 / 傲娇拒绝 / 赖皮"));
+  assert.ok(rebelPrompt.includes("严禁逻辑前后自相矛盾"));
 
   const foodPrompt = buildChatSystemPrompt({
     persona: "你是布偶猫钢蛋儿",
